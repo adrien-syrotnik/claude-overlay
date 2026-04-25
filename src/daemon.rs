@@ -130,7 +130,21 @@ pub async fn run_hook_listener_with_app(
                     return;
                 }
             };
-            let state = payload_to_state(payload);
+            let mut state = payload_to_state(payload);
+            if state.source_type == SourceType::Vscode {
+                // Try exact match by IPC hook first
+                if let Some(hook) = &state.vscode_ipc_hook {
+                    if let Some(id) = ctx.registry.find_by_ipc_hook(hook) {
+                        state.target_ext_id = Some(id);
+                    }
+                }
+                // Fallback: match by terminal cwd (most recently focused)
+                if state.target_ext_id.is_none() {
+                    if let Some(id) = ctx.registry.find_by_terminal_cwd(&state.cwd) {
+                        state.target_ext_id = Some(id);
+                    }
+                }
+            }
             let state_clone = state.clone();
             let id = store.add(state);
             let _ = reader.get_mut().write_all(
