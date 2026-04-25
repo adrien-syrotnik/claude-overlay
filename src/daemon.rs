@@ -4,6 +4,7 @@
 use crate::heuristic::detect_yn_prompt;
 use crate::registry::{ExtensionConnection, Registry, TerminalInfo};
 use crate::store::{HookEvent, NotifState, NotifStore, SourceType};
+use crate::vscode_client::{new_pending, route_result, PendingMap};
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -54,6 +55,7 @@ pub struct HookPayload {
 pub struct DaemonCtx {
     pub store: Arc<NotifStore>,
     pub registry: Arc<Registry>,
+    pub pending: PendingMap,
 }
 
 impl DaemonCtx {
@@ -61,6 +63,7 @@ impl DaemonCtx {
         Self {
             store: Arc::new(NotifStore::new()),
             registry: Arc::new(Registry::new()),
+            pending: new_pending(),
         }
     }
 }
@@ -222,7 +225,9 @@ async fn handle_ws(ctx: Arc<DaemonCtx>, stream: tokio::net::TcpStream) -> Result
                         }
                     }
                     Some("COMMAND_RESULT") => {
-                        // Will be handled by vscode_client in Task 8.
+                        if let Some(id) = v.get("cmd_id").and_then(|s| s.as_str()) {
+                            route_result(&ctx.pending, id, v.clone()).await;
+                        }
                     }
                     _ => {}
                 }

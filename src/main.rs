@@ -3,6 +3,7 @@ mod daemon;
 mod heuristic;
 mod registry;
 mod store;
+mod vscode_client;
 
 use anyhow::Result;
 use std::sync::Arc;
