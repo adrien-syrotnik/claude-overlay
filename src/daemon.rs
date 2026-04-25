@@ -102,20 +102,21 @@ pub fn payload_to_state(p: HookPayload) -> NotifState {
 }
 
 /// Run the TCP listener for hook payloads. Each connection sends one JSON line,
-/// we reply with `{"ok":true,"notif_id":"..."}` and close.
-pub async fn run_hook_listener<F>(ctx: Arc<DaemonCtx>, mut on_notif: F) -> Result<()>
-where
-    F: FnMut(String) + Send + 'static,
-{
-    let listener = TcpListener::bind(("127.0.0.1", HOOK_PORT))
-        .await
+/// we reply with `{"ok":true,"notif_id":"..."}` and emit a Tauri event.
+pub async fn run_hook_listener_with_app(
+    ctx: Arc<DaemonCtx>,
+    store: Arc<NotifStore>,
+    app: tauri::AppHandle,
+) -> Result<()> {
+    let listener = TcpListener::bind(("127.0.0.1", HOOK_PORT)).await
         .context("bind hook port failed")?;
     eprintln!("[daemon] hook listener on 127.0.0.1:{}", HOOK_PORT);
-    let _ = &mut on_notif;
 
     loop {
         let (socket, _) = listener.accept().await?;
         let ctx = ctx.clone();
+        let store = store.clone();
+        let app = app.clone();
         tokio::spawn(async move {
             let mut reader = BufReader::new(socket);
             let mut line = String::new();
@@ -123,19 +124,23 @@ where
             let payload: HookPayload = match serde_json::from_str(&line) {
                 Ok(p) => p,
                 Err(e) => {
-                    let _ = reader.get_mut()
-                        .write_all(format!("{{\"ok\":false,\"error\":\"{}\"}}\n", e).as_bytes())
-                        .await;
+                    let _ = reader.get_mut().write_all(
+                        format!("{{\"ok\":false,\"error\":\"{}\"}}\n", e).as_bytes()
+                    ).await;
                     return;
                 }
             };
             let state = payload_to_state(payload);
-            let id = ctx.store.add(state);
-            let _ = reader.get_mut()
-                .write_all(format!("{{\"ok\":true,\"notif_id\":\"{}\"}}\n", id).as_bytes())
-                .await;
-            // on_notif is called from spawn but we need to guarantee thread-safety;
-            // keep this simple: pass notif_id to caller via... we'll wire through in Task 10.
+            let state_clone = state.clone();
+            let id = store.add(state);
+            let _ = reader.get_mut().write_all(
+                format!("{{\"ok\":true,\"notif_id\":\"{}\"}}\n", id).as_bytes()
+            ).await;
+            // Build an updated state with the id assigned for the emit.
+            let mut with_id = state_clone;
+            with_id.id = id.clone();
+            crate::tauri_app::emit_notif_new(&app, &with_id);
+            let _ = ctx;
         });
     }
 }
