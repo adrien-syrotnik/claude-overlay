@@ -1,3 +1,4 @@
+mod autostart;
 mod heuristic;
 mod registry;
 mod store;
