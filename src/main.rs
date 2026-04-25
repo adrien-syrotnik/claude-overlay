@@ -1,5 +1,6 @@
 mod autostart;
 mod daemon;
+mod focus_win32;
 mod heuristic;
 mod registry;
 mod store;
@@ -60,6 +61,9 @@ fn run_daemon() -> Result<()> {
         .invoke_handler(tauri::generate_handler![
             tauri_app::notif_list,
             tauri_app::notif_dismiss,
+            tauri_app::notif_focus,
+            tauri_app::notif_send_yes,
+            tauri_app::notif_send_no,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
