@@ -1,15 +1,19 @@
 //! Daemon: listens for hook payloads (TCP 57842) and parses them into NotifState.
-//! WebSocket listener for VS Code extensions (port 57843) comes in Task 7.
+//! Also exposes a WebSocket listener (port 57843) for VS Code extensions.
 
 use crate::heuristic::detect_yn_prompt;
-use crate::registry::Registry;
+use crate::registry::{ExtensionConnection, Registry, TerminalInfo};
 use crate::store::{HookEvent, NotifState, NotifStore, SourceType};
 use anyhow::{Context, Result};
+use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
+use serde_json::Value;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
+use tokio::sync::mpsc;
+use tokio_tungstenite::tungstenite::Message;
 use windows::core::HSTRING;
 use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, HANDLE};
 use windows::Win32::System::Threading::CreateMutexW;
@@ -131,4 +135,107 @@ where
             // keep this simple: pass notif_id to caller via... we'll wire through in Task 10.
         });
     }
+}
+
+pub async fn run_ws_listener(ctx: Arc<DaemonCtx>) -> Result<()> {
+    let listener = TcpListener::bind(("127.0.0.1", WS_PORT))
+        .await
+        .context("bind ws port failed")?;
+    eprintln!("[daemon] ws listener on 127.0.0.1:{}", WS_PORT);
+
+    loop {
+        let (socket, _) = listener.accept().await?;
+        let ctx = ctx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = handle_ws(ctx, socket).await {
+                eprintln!("[ws] handler error: {:?}", e);
+            }
+        });
+    }
+}
+
+async fn handle_ws(ctx: Arc<DaemonCtx>, stream: tokio::net::TcpStream) -> Result<()> {
+    let ws_stream = tokio_tungstenite::accept_async(stream).await
+        .context("ws accept failed")?;
+    let (mut write, mut read) = ws_stream.split();
+    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+
+    let mut ext_id: Option<String> = None;
+
+    loop {
+        tokio::select! {
+            msg = read.next() => {
+                let msg = match msg {
+                    Some(Ok(m)) => m,
+                    _ => break,
+                };
+                let text = match msg {
+                    Message::Text(t) => t,
+                    Message::Close(_) => break,
+                    _ => continue,
+                };
+                let v: Value = match serde_json::from_str(&text) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                match v.get("type").and_then(|t| t.as_str()) {
+                    Some("REGISTER") => {
+                        let id = v.get("ext_id").and_then(|s| s.as_str()).unwrap_or("").to_string();
+                        let hook = v.get("vscode_ipc_hook").and_then(|s| s.as_str()).unwrap_or("").to_string();
+                        let pid = v.get("vscode_pid").and_then(|s| s.as_u64()).map(|x| x as u32);
+                        let focused = v.get("window_focused").and_then(|b| b.as_bool()).unwrap_or(false);
+                        let folders: Vec<String> = v.get("workspace_folders")
+                            .and_then(|a| a.as_array())
+                            .map(|a| a.iter().filter_map(|s| s.as_str().map(|s| s.to_string())).collect())
+                            .unwrap_or_default();
+                        ctx.registry.insert(ExtensionConnection {
+                            ext_id: id.clone(),
+                            vscode_ipc_hook: hook,
+                            workspace_folders: folders,
+                            vscode_pid: pid,
+                            window_focused: focused,
+                            terminals: vec![],
+                            last_focus_change: Instant::now(),
+                            tx: tx.clone(),
+                        });
+                        ext_id = Some(id);
+                    }
+                    Some("TERMINALS_UPDATED") => {
+                        if let Some(id) = &ext_id {
+                            let terminals: Vec<TerminalInfo> = v.get("terminals")
+                                .and_then(|a| a.as_array())
+                                .map(|a| a.iter().filter_map(|t| {
+                                    Some(TerminalInfo {
+                                        name: t.get("name")?.as_str()?.to_string(),
+                                        cwd: t.get("cwd").and_then(|c| c.as_str().map(|s| s.to_string())),
+                                        pid: t.get("pid").and_then(|p| p.as_u64()).map(|x| x as u32),
+                                    })
+                                }).collect())
+                                .unwrap_or_default();
+                            ctx.registry.update_terminals(id, terminals);
+                        }
+                    }
+                    Some("WINDOW_FOCUS_CHANGED") => {
+                        if let Some(id) = &ext_id {
+                            let focused = v.get("focused").and_then(|b| b.as_bool()).unwrap_or(false);
+                            ctx.registry.update_focus(id, focused);
+                        }
+                    }
+                    Some("COMMAND_RESULT") => {
+                        // Will be handled by vscode_client in Task 8.
+                    }
+                    _ => {}
+                }
+            }
+            out = rx.recv() => {
+                let Some(text) = out else { break };
+                if write.send(Message::Text(text)).await.is_err() { break; }
+            }
+        }
+    }
+
+    if let Some(id) = ext_id {
+        ctx.registry.remove(&id);
+    }
+    Ok(())
 }

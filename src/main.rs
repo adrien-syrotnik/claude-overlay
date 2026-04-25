@@ -46,6 +46,12 @@ async fn run_daemon() -> Result<()> {
         }
     };
     let ctx = Arc::new(daemon::DaemonCtx::new());
+    let ctx_ws = ctx.clone();
+    tokio::spawn(async move {
+        if let Err(e) = daemon::run_ws_listener(ctx_ws).await {
+            eprintln!("ws listener error: {:?}", e);
+        }
+    });
     daemon::run_hook_listener(ctx, |_id| {}).await?;
     Ok(())
 }
