@@ -1,14 +1,15 @@
 //! Daemon: listens for hook payloads (TCP 57842) and parses them into NotifState.
 //! Also exposes a WebSocket listener (port 57843) for VS Code extensions.
 
+use crate::focus_win32;
 use crate::heuristic::detect_yn_prompt;
 use crate::registry::{ExtensionConnection, Registry, TerminalInfo};
 use crate::store::{HookEvent, NotifState, NotifStore, SourceType};
-use crate::vscode_client::{new_pending, route_result, PendingMap};
+use crate::vscode_client::{new_pending, route_result, send_command, PendingMap};
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -145,6 +146,12 @@ pub async fn run_hook_listener_with_app(
                     }
                 }
             }
+            if is_terminal_foreground(&ctx, &state).await {
+                let _ = reader.get_mut().write_all(
+                    b"{\"ok\":true,\"displayed\":false,\"reason\":\"foreground_skip\"}\n"
+                ).await;
+                return;
+            }
             let state_clone = state.clone();
             let id = store.add(state);
             let _ = reader.get_mut().write_all(
@@ -262,4 +269,29 @@ async fn handle_ws(ctx: Arc<DaemonCtx>, stream: tokio::net::TcpStream) -> Result
         ctx.registry.remove(&id);
     }
     Ok(())
+}
+
+async fn is_terminal_foreground(ctx: &DaemonCtx, state: &NotifState) -> bool {
+    match state.source_type {
+        SourceType::Wt => {
+            let needle = state.source_basename.to_lowercase();
+            if let Some(hwnd) = focus_win32::find_window_by_title(Some(focus_win32::CLASS_WT), &needle) {
+                let fg = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+                return fg == hwnd;
+            }
+            false
+        }
+        SourceType::Vscode => {
+            let Some(ext_id) = &state.target_ext_id else { return false; };
+            let res = send_command(
+                &ctx.registry, &ctx.pending, ext_id,
+                json!({"type": "IS_ACTIVE_TERMINAL", "cwd": state.cwd}),
+                200,
+            ).await;
+            res.ok()
+                .and_then(|v| v.get("active").and_then(|b| b.as_bool()))
+                .unwrap_or(false)
+        }
+        SourceType::Unknown => false,
+    }
 }
