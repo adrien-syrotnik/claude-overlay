@@ -1,4 +1,5 @@
 mod heuristic;
+mod registry;
 mod store;
 
 fn main() {
