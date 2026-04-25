@@ -1,0 +1,58 @@
+* { box-sizing: border-box; margin: 0; padding: 0; font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; }
+html, body { background: transparent; overflow: hidden; }
+
+body { padding-top: 16px; display: flex; justify-content: center; }
+
+.pill {
+  min-width: 360px;
+  max-width: 640px;
+  background: rgba(22, 22, 26, 0.92);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 24px;
+  color: #f1f1f3;
+  padding: 6px 10px;
+  transition: opacity 200ms ease-out, transform 200ms ease-out, height 250ms cubic-bezier(0.2, 0, 0.2, 1);
+  overflow: hidden;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.pill-hidden { opacity: 0; transform: translateY(-12px); pointer-events: none; }
+
+#notif-list { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+
+.notif-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  min-height: 36px;
+  animation: rowIn 200ms ease-out;
+}
+
+@keyframes rowIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+.notif-row.leaving { animation: rowOut 180ms ease-in forwards; }
+@keyframes rowOut { to { opacity: 0; transform: translateY(-6px); } }
+
+.status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.status-dot.notification { background: #4aa0ff; box-shadow: 0 0 8px #4aa0ff; animation: pulse 1.2s ease-in-out infinite; }
+.status-dot.stop { background: #4ade80; }
+
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+.basename { font-weight: 500; color: #f1f1f3; margin-right: 2px; }
+.separator { color: rgba(255,255,255,0.35); margin: 0 2px; }
+.message { color: rgba(255,255,255,0.82); font-weight: 300; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.btn-group { display: flex; gap: 4px; flex-shrink: 0; }
+.btn { border: 0; background: rgba(255,255,255,0.08); color: #f1f1f3; padding: 4px 10px; border-radius: 10px; font-size: 12px; cursor: pointer; transition: background 120ms; }
+.btn:hover { background: rgba(255,255,255,0.15); }
+.btn-accent { background: #4aa0ff; }
+.btn-accent:hover { background: #5aa8ff; }
+.btn-accent.no { background: rgba(255,255,255,0.08); }
+.btn-icon { padding: 4px 8px; }
+
+.error-flash { background: rgba(239, 68, 68, 0.18); }
