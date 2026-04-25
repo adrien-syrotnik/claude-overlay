@@ -1,0 +1,6 @@
+/target
+/vscode-ext/node_modules
+/vscode-ext/out
+/vscode-ext/*.vsix
+/ui/dist
+.env
