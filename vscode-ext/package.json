@@ -1,0 +1,32 @@
+{
+  "name": "claude-overlay-focus",
+  "displayName": "Claude Overlay Focus",
+  "description": "Bridges Claude Code overlay to VS Code terminals",
+  "version": "0.1.0",
+  "publisher": "adrie-local",
+  "engines": { "vscode": "^1.85.0" },
+  "activationEvents": ["onStartupFinished"],
+  "extensionKind": ["ui"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "claudeOverlay.reconnect", "title": "Claude Overlay: Force reconnect to daemon" },
+      { "command": "claudeOverlay.status", "title": "Claude Overlay: Show connection status" }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "package": "vsce package --no-dependencies --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8",
+    "@vscode/vsce": "^2.24",
+    "typescript": "^5.3"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}
