@@ -5,9 +5,13 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div id="pill" class="pill pill-hidden">
+  <div id="pill" class="pill">
+    <div id="status-bar" class="status-bar">
+      <span class="dot dot-idle"></span>
+      <span id="status-text">claude-overlay · idle</span>
+    </div>
     <ul id="notif-list"></ul>
   </div>
-  <script type="module" src="app.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>

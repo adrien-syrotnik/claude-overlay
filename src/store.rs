@@ -19,6 +19,7 @@ pub enum SourceType {
 pub enum HookEvent {
     Notification,
     Stop,
+    AskQuestion,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -30,6 +31,9 @@ pub struct NotifState {
     pub cwd: String,
     pub message: String,
     pub yesno_format: Option<YesNoFormat>,
+    /// AskUserQuestion options. When set, UI renders one button per option and
+    /// the daemon waits for the user's choice on a held-open TCP connection.
+    pub options: Option<Vec<String>>,
     pub target_ext_id: Option<String>,
     pub vscode_ipc_hook: Option<String>,
     pub wt_session: Option<String>,
@@ -64,6 +68,22 @@ impl NotifStore {
         id
     }
 
+    /// Remove any existing entries with the same cwd, then add the new state.
+    /// Returns (new_id, removed_ids) so the caller can emit notif:remove for the displaced rows.
+    pub fn add_dedup_by_cwd(&self, mut state: NotifState) -> (String, Vec<String>) {
+        let mut v = self.inner.lock().unwrap();
+        let removed: Vec<String> = v.iter()
+            .filter(|n| n.cwd == state.cwd)
+            .map(|n| n.id.clone())
+            .collect();
+        v.retain(|n| n.cwd != state.cwd);
+        state.id = Uuid::new_v4().to_string();
+        state.created_at = Instant::now();
+        let id = state.id.clone();
+        v.push(state);
+        (id, removed)
+    }
+
     pub fn remove(&self, id: &str) -> Option<NotifState> {
         let mut v = self.inner.lock().unwrap();
         let pos = v.iter().position(|n| n.id == id)?;
@@ -92,10 +112,11 @@ mod tests {
             id: String::new(),
             event: HookEvent::Notification,
             source_type: SourceType::Wt,
-            source_basename: "trading".into(),
-            cwd: "/home/adrie/code/trading".into(),
+            source_basename: "myproject".into(),
+            cwd: "/home/user/code/myproject".into(),
             message: msg.into(),
             yesno_format: None,
+            options: None,
             target_ext_id: None,
             vscode_ipc_hook: None,
             wt_session: None,

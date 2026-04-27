@@ -10,11 +10,12 @@ use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::tungstenite::Message;
 use windows::core::HSTRING;
 use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, HANDLE};
@@ -51,12 +52,22 @@ pub struct HookPayload {
     pub vscode_ipc_hook: String,
     pub vscode_pid: String,
     pub timestamp_ms: u64,
+    /// AskUserQuestion options. When non-empty, daemon holds the TCP socket
+    /// open and replies with the user's choice once they click in the overlay.
+    #[serde(default)]
+    pub options: Vec<String>,
 }
+
+/// Map from notif_id → oneshot sender for the user's chosen answer. Set on
+/// payload arrival when `options` is non-empty; consumed by `notif_answer` /
+/// `notif_dismiss` once the user clicks.
+pub type PendingAnswers = Arc<Mutex<HashMap<String, oneshot::Sender<String>>>>;
 
 pub struct DaemonCtx {
     pub store: Arc<NotifStore>,
     pub registry: Arc<Registry>,
     pub pending: PendingMap,
+    pub pending_answers: PendingAnswers,
 }
 
 impl DaemonCtx {
@@ -65,6 +76,7 @@ impl DaemonCtx {
             store: Arc::new(NotifStore::new()),
             registry: Arc::new(Registry::new()),
             pending: new_pending(),
+            pending_answers: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -73,6 +85,7 @@ fn parse_event(s: &str) -> HookEvent {
     match s {
         "Notification" => HookEvent::Notification,
         "Stop" => HookEvent::Stop,
+        "AskQuestion" => HookEvent::AskQuestion,
         _ => HookEvent::Notification,
     }
 }
@@ -87,6 +100,7 @@ fn parse_source(s: &str) -> SourceType {
 
 /// Build NotifState from raw payload. Full matching/skip-foreground happens in daemon loop.
 pub fn payload_to_state(p: HookPayload) -> NotifState {
+    let options = if p.options.is_empty() { None } else { Some(p.options) };
     NotifState {
         id: String::new(),
         event: parse_event(&p.event),
@@ -95,6 +109,7 @@ pub fn payload_to_state(p: HookPayload) -> NotifState {
         cwd: p.cwd,
         message: p.message.clone(),
         yesno_format: detect_yn_prompt(&p.message),
+        options,
         target_ext_id: None,
         vscode_ipc_hook: if p.vscode_ipc_hook.is_empty() { None } else { Some(p.vscode_ipc_hook) },
         wt_session: if p.wt_session.is_empty() { None } else { Some(p.wt_session) },
@@ -146,21 +161,51 @@ pub async fn run_hook_listener_with_app(
                     }
                 }
             }
-            if is_terminal_foreground(&ctx, &state).await {
+            // For AskQuestion (with options), we ALWAYS show the overlay even
+            // if the source terminal is foreground — the user must explicitly
+            // pick an option. Skip-foreground only applies to fire-and-forget
+            // notifs.
+            let has_options = state.options.is_some();
+            if !has_options && is_terminal_foreground(&ctx, &state).await {
                 let _ = reader.get_mut().write_all(
                     b"{\"ok\":true,\"displayed\":false,\"reason\":\"foreground_skip\"}\n"
                 ).await;
                 return;
             }
             let state_clone = state.clone();
-            let id = store.add(state);
+            let (id, displaced) = store.add_dedup_by_cwd(state);
             let _ = reader.get_mut().write_all(
                 format!("{{\"ok\":true,\"notif_id\":\"{}\"}}\n", id).as_bytes()
             ).await;
-            // Build an updated state with the id assigned for the emit.
+            for old_id in &displaced {
+                crate::tauri_app::emit_notif_remove(&app, old_id);
+                // If a displaced notif had a pending answer waiter, drop it
+                // (the hook on the other end gets oneshot Err and exits empty).
+                let dropped = ctx.pending_answers.lock().unwrap().remove(old_id);
+                drop(dropped);
+            }
             let mut with_id = state_clone;
             with_id.id = id.clone();
             crate::tauri_app::emit_notif_new(&app, &with_id);
+
+            if has_options {
+                // Register oneshot, await user click in overlay, write answer back.
+                let (tx, rx) = oneshot::channel::<String>();
+                {
+                    let mut guard = ctx.pending_answers.lock().unwrap();
+                    guard.insert(id.clone(), tx);
+                }
+                // 10-minute cap so a forgotten notif doesn't pin the hook forever.
+                let answer = match tokio::time::timeout(
+                    std::time::Duration::from_secs(600), rx,
+                ).await {
+                    Ok(Ok(a)) => a,
+                    _ => String::new(),
+                };
+                let line = json!({"answer": answer}).to_string();
+                let _ = reader.get_mut().write_all(line.as_bytes()).await;
+                let _ = reader.get_mut().write_all(b"\n").await;
+            }
             let _ = ctx;
         });
     }
@@ -269,6 +314,40 @@ async fn handle_ws(ctx: Arc<DaemonCtx>, stream: tokio::net::TcpStream) -> Result
         ctx.registry.remove(&id);
     }
     Ok(())
+}
+
+/// Polls every 500ms while at least one notif is active. If the foreground window
+/// matches a notif's source (class + basename in title), auto-dismiss it.
+/// Interactive notifs (AskQuestion with options, or y/n prompts) are NEVER
+/// auto-dismissed — the user must explicitly click an option.
+pub async fn run_foreground_watcher(ctx: Arc<DaemonCtx>, app: tauri::AppHandle) {
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(500));
+    loop {
+        tick.tick().await;
+        let notifs = ctx.store.list();
+        if notifs.is_empty() { continue; }
+        let (fg_class, fg_title) = focus_win32::foreground_info();
+        if fg_class.is_empty() { continue; }
+        let fg_title_lc = fg_title.to_lowercase();
+        for n in &notifs {
+            // Interactive notifs require a click — never auto-dismiss them.
+            if n.options.is_some() || n.yesno_format.is_some() { continue; }
+            let needle = n.source_basename.to_lowercase();
+            let class_ok = match n.source_type {
+                SourceType::Wt => fg_class.eq_ignore_ascii_case(focus_win32::CLASS_WT),
+                SourceType::Vscode => fg_class.eq_ignore_ascii_case(focus_win32::CLASS_VSCODE),
+                SourceType::Unknown => false,
+            };
+            let title_ok = fg_title_lc.contains(&needle);
+            if class_ok && title_ok {
+                ctx.store.remove(&n.id);
+                crate::tauri_app::emit_notif_remove(&app, &n.id);
+            }
+        }
+        if ctx.store.len() == 0 {
+            crate::tauri_app::hide_pill(&app);
+        }
+    }
 }
 
 async fn is_terminal_foreground(ctx: &DaemonCtx, state: &NotifState) -> bool {

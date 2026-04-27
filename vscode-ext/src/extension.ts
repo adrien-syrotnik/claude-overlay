@@ -37,13 +37,28 @@ function scheduleReconnect() {
 }
 
 function terminalCwd(t: vscode.Terminal): string | null {
+  // Prefer shellIntegration.cwd — the live cwd of the running shell, which
+  // tracks `cd` mutations. Fallback to creationOptions.cwd for terminals
+  // without shell integration enabled.
+  const live = (t as any).shellIntegration?.cwd as vscode.Uri | undefined;
+  if (live) return live.fsPath;
   const c = (t.creationOptions as vscode.TerminalOptions | undefined)?.cwd;
   if (!c) return null;
   return typeof c === 'string' ? c : c.fsPath;
 }
 
+function pathsEqual(a: string | null, b: string | null): boolean {
+  if (!a || !b) return false;
+  // Normalize trailing slashes; on Windows do case-insensitive compare.
+  const norm = (s: string) => s.replace(/[/\\]+$/, '');
+  const na = norm(a);
+  const nb = norm(b);
+  if (process.platform === 'win32') return na.toLowerCase() === nb.toLowerCase();
+  return na === nb;
+}
+
 function findTerminal(cwd: string): vscode.Terminal | undefined {
-  return vscode.window.terminals.find(t => terminalCwd(t) === cwd);
+  return vscode.window.terminals.find(t => pathsEqual(terminalCwd(t), cwd));
 }
 
 function sendTerminalsUpdate() {
@@ -75,9 +90,10 @@ function handleMessage(raw: RawData) {
       break;
     }
     case 'IS_ACTIVE_TERMINAL': {
+      const at = vscode.window.activeTerminal;
       const active =
         vscode.window.state.focused &&
-        terminalCwd(vscode.window.activeTerminal as vscode.Terminal) === msg.cwd;
+        !!at && pathsEqual(terminalCwd(at), msg.cwd);
       reply(cmdId, { active });
       break;
     }
@@ -119,12 +135,18 @@ function connect() {
 export function activate(ctx: vscode.ExtensionContext) {
   connect();
 
-  ctx.subscriptions.push(
+  const subs: (vscode.Disposable | undefined)[] = [
     vscode.window.onDidOpenTerminal(sendTerminalsUpdate),
     vscode.window.onDidCloseTerminal(sendTerminalsUpdate),
+    // Fires when the live cwd of a terminal's shell changes (cd, pushd, …).
+    (vscode.window as any).onDidChangeTerminalShellIntegration?.(sendTerminalsUpdate),
     vscode.window.onDidChangeWindowState(e =>
       send({ type: 'WINDOW_FOCUS_CHANGED', focused: e.focused })
     ),
+  ];
+  for (const s of subs) if (s) ctx.subscriptions.push(s);
+
+  ctx.subscriptions.push(
     vscode.commands.registerCommand('claudeOverlay.reconnect', () => {
       ws?.close(); scheduleReconnect();
     }),

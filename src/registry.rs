@@ -131,23 +131,23 @@ mod tests {
     fn find_by_cwd_single_match() {
         let r = Registry::new();
         let mut a = fake_ext("a", "/sock/a");
-        a.terminals = vec![TerminalInfo { name: "t1".into(), cwd: Some("/trading".into()), pid: None }];
+        a.terminals = vec![TerminalInfo { name: "t1".into(), cwd: Some("/sample".into()), pid: None }];
         r.insert(a);
-        assert_eq!(r.find_by_terminal_cwd("/trading").as_deref(), Some("a"));
+        assert_eq!(r.find_by_terminal_cwd("/sample").as_deref(), Some("a"));
     }
 
     #[test]
     fn find_by_cwd_prefers_most_recently_focused() {
         let r = Registry::new();
         let mut a = fake_ext("a", "/sock/a");
-        a.terminals = vec![TerminalInfo { name: "t1".into(), cwd: Some("/trading".into()), pid: None }];
+        a.terminals = vec![TerminalInfo { name: "t1".into(), cwd: Some("/sample".into()), pid: None }];
         a.last_focus_change = Instant::now() - std::time::Duration::from_secs(10);
         r.insert(a);
         let mut b = fake_ext("b", "/sock/b");
-        b.terminals = vec![TerminalInfo { name: "t2".into(), cwd: Some("/trading".into()), pid: None }];
+        b.terminals = vec![TerminalInfo { name: "t2".into(), cwd: Some("/sample".into()), pid: None }];
         b.last_focus_change = Instant::now();
         r.insert(b);
-        assert_eq!(r.find_by_terminal_cwd("/trading").as_deref(), Some("b"));
+        assert_eq!(r.find_by_terminal_cwd("/sample").as_deref(), Some("b"));
     }
 
     #[test]

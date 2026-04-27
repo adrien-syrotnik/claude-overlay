@@ -2,7 +2,7 @@
 
 **Date** : 2026-04-24
 **Status** : Draft awaiting user review
-**Working directory** : `/home/adrie/code/trading` (par convention, le spec vit ici même si l'outil est orthogonal au bot de trading — il sert dans **toutes** les sessions Claude Code)
+**Working directory** : `~/code/myproject` (par convention, le spec vit ici même si l'outil est orthogonal aux autres projets — il sert dans **toutes** les sessions Claude Code)
 **Language** : FR (user) — identifiers techniques en anglais
 
 ---
@@ -85,7 +85,7 @@ Trois composants coopérants, tous sur la machine locale Windows 11 :
 │           registre extensions: Map<ext_id, ExtensionConnection>           │
 │           store notifs: Vec<NotifState>                                   │
 │                                                                           │
-│  VS Code window #1 (ex: trading en Remote-WSL)                            │
+│  VS Code window #1 (ex: myproject en Remote-WSL)                            │
 │     │                                                                     │
 │     └─ extension "claude-overlay-focus" (UI extension, runs on Windows)   │
 │           - au activate(): WebSocket connect 127.0.0.1:57843              │
@@ -150,10 +150,10 @@ Les deux bouts (client spawn par hook + daemon) tournent **côté Windows**. `12
 ```json
 {
   "event": "Notification" | "Stop",
-  "cwd": "/home/adrie/code/trading",
+  "cwd": "~/code/myproject",
   "message": "Claude is waiting for your input [y/N]",
   "source_type": "vscode" | "wt" | "unknown",
-  "source_basename": "trading",
+  "source_basename": "myproject",
   "wt_session": "uuid-or-empty",
   "vscode_ipc_hook": "/run/user/1000/vscode-ipc-xyz.sock-or-empty",
   "vscode_pid": "12345-or-empty",
@@ -167,10 +167,10 @@ Réponse daemon : `{"ok": true, "notif_id": "abc123", "displayed": true}` ou `{"
 Extension → Daemon :
 ```json
 // Au connect
-{"type": "REGISTER", "ext_id": "uuid-v4", "vscode_ipc_hook": "/run/.../vscode-ipc-xyz.sock", "workspace_folders": ["/home/adrie/code/trading"], "vscode_pid": 12345, "window_focused": true}
+{"type": "REGISTER", "ext_id": "uuid-v4", "vscode_ipc_hook": "/run/.../vscode-ipc-xyz.sock", "workspace_folders": ["~/code/myproject"], "vscode_pid": 12345, "window_focused": true}
 
 // Sur changement
-{"type": "TERMINALS_UPDATED", "terminals": [{"name": "bash", "cwd": "/home/adrie/code/trading", "pid": 45678}, ...]}
+{"type": "TERMINALS_UPDATED", "terminals": [{"name": "bash", "cwd": "~/code/myproject", "pid": 45678}, ...]}
 {"type": "WINDOW_FOCUS_CHANGED", "focused": true}
 
 // Réponse à une commande
@@ -179,9 +179,9 @@ Extension → Daemon :
 
 Daemon → Extension :
 ```json
-{"type": "FOCUS", "cmd_id": "c1", "cwd": "/home/adrie/code/trading"}
-{"type": "SEND_TEXT", "cmd_id": "c2", "cwd": "/home/adrie/code/trading", "text": "y\n"}
-{"type": "IS_ACTIVE_TERMINAL", "cmd_id": "c3", "cwd": "/home/adrie/code/trading"}
+{"type": "FOCUS", "cmd_id": "c1", "cwd": "~/code/myproject"}
+{"type": "SEND_TEXT", "cmd_id": "c2", "cwd": "~/code/myproject", "text": "y\n"}
+{"type": "IS_ACTIVE_TERMINAL", "cmd_id": "c3", "cwd": "~/code/myproject"}
 {"type": "PING", "cmd_id": "c4"}
 ```
 
@@ -267,7 +267,7 @@ exit 0
 **Pourquoi `extensionKind: ["ui"]`**
 - L'extension tourne sur Windows (même quand VS Code est en Remote-WSL)
 - Le WebSocket `127.0.0.1:57843` pointe vers le daemon Windows — pas de traversée WSL
-- `vscode.window.terminals` est proxifié : l'extension UI voit TOUS les terminaux (Remote-WSL inclus), avec `creationOptions.cwd` reflétant le path remote (`/home/adrie/...`)
+- `vscode.window.terminals` est proxifié : l'extension UI voit TOUS les terminaux (Remote-WSL inclus), avec `creationOptions.cwd` reflétant le path remote (`/home/user/...`)
 - `terminal.sendText()` forward correctement vers le pty remote via le tunnel RPC interne de VS Code
 
 **Fallback si l'API proxy ne donne pas accès aux cwd Remote-WSL comme attendu** : on passe à `extensionKind: ["ui", "workspace"]`. La variante Workspace (dans WSL remote extension host) se connecte au daemon via `$(ip route show default | awk '{print $3}'):57843` (gateway Windows). Plus fragile, activé seulement si le test manuel révèle le besoin.
@@ -520,7 +520,7 @@ Retire la `NotifState` du store, emit `notif:remove`, la row fade-out, la pill r
 
 ### Contenu par ligne
 ```
-[● vert/bleu]  trading › Claude is waiting for your input [y/N]     [Yes] [No] [Focus] [×]
+[● vert/bleu]  myproject › Claude is waiting for your input [y/N]     [Yes] [No] [Focus] [×]
 ```
 - Pastille statut : vert si `event=Stop`, bleu pulsant si `event=Notification`
 - Prefix `basename ›` en medium
@@ -576,10 +576,10 @@ VS Code extensions (install locale):
 {
   "hooks": {
     "Notification": [
-      { "matcher": "", "hooks": [{ "type": "command", "command": "bash /home/adrie/.claude/hooks/claude-overlay-notify.sh" }] }
+      { "matcher": "", "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/claude-overlay-notify.sh" }] }
     ],
     "Stop": [
-      { "matcher": "", "hooks": [{ "type": "command", "command": "bash /home/adrie/.claude/hooks/claude-overlay-notify.sh" }] }
+      { "matcher": "", "hooks": [{ "type": "command", "command": "bash ~/.claude/hooks/claude-overlay-notify.sh" }] }
     ]
   }
 }
@@ -698,7 +698,7 @@ v1 = **tests manuels principaux**, unit tests ciblés sur la logique parseable.
 9. [ ] No button sur prompt `[Y/n]` dans VS Code Remote-WSL : envoie `n\n`, terminal Linux le reçoit
 10. [ ] Message sans pattern y/N : boutons Yes/No absents, juste Focus et ×
 11. [ ] Skip foreground VS Code : focus VS Code terminal cwd X, fire notif pour X → pas d'overlay (beep OK)
-12. [ ] Skip foreground WT : focus WT window title trading, fire notif cwd trading → pas d'overlay
+12. [ ] Skip foreground WT : focus WT window title myproject, fire notif cwd myproject → pas d'overlay
 13. [ ] Auto-close Notification à 15s
 14. [ ] Auto-close Stop à 3s
 15. [ ] Kill daemon pendant notif : process exit, next notif respawn daemon via hook bash fallback
@@ -717,7 +717,7 @@ Pas de bench launch-time automatisé en v1 (mesure manuelle Measure-Command sur 
 ## 11. Open questions & risques
 
 ### Open questions à trancher pendant l'implémentation
-1. **Repo standalone vs sous-dossier trading** : reco repo standalone (`~/code/claude-overlay/`). Le spec vit dans `trading/docs/superpowers/specs/` par convention user mais sera copié dans le repo outil pour vie autonome.
+1. **Repo standalone vs sous-dossier d'un autre projet** : reco repo standalone (`~/code/claude-overlay/`). Le spec vit dans `other-project/docs/specs/` par convention user mais sera copié dans le repo outil pour vie autonome.
 2. **Timer auto-close par-notif vs pill-global** : commence par-notif, bascule si feel gênant.
 3. **Beep dans hook bash ou hook séparé** : dans hook bash (section 3.2). Plus simple, user commente la ligne après validation.
 4. **`extensionKind: ["ui"]` suffit pour terminaux Remote-WSL** : à valider au test 2 de la checklist. Fallback `["ui", "workspace"]` documenté.

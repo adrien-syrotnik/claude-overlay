@@ -60,6 +60,13 @@ pub fn find_window_by_title(class_filter: Option<&'static str>, needle: &str) ->
     state.best
 }
 
+/// Returns (class, title) of the current foreground window, or ("","") if none.
+pub fn foreground_info() -> (String, String) {
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.0 == 0 { return (String::new(), String::new()); }
+    (hwnd_class(hwnd), hwnd_title(hwnd))
+}
+
 pub fn focus_hwnd(hwnd: HWND) -> Result<()> {
     unsafe {
         let _ = ShowWindow(hwnd, SW_RESTORE);
