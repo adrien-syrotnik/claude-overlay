@@ -1,6 +1,6 @@
 //! In-memory store of live notifications displayed in the overlay.
 
-use crate::heuristic::YesNoFormat;
+use crate::input_spec::YesNoFormat;
 use serde::Serialize;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -47,16 +47,6 @@ pub struct NotifState {
     pub created_at: Instant,
 }
 
-// Make YesNoFormat serializable since it's used inside NotifState.
-impl Serialize for YesNoFormat {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(match self {
-            YesNoFormat::YN => "y_n",
-            YesNoFormat::YesNo => "yes_no",
-            YesNoFormat::Numeric => "numeric",
-        })
-    }
-}
 
 pub struct NotifStore {
     inner: Mutex<Vec<NotifState>>,

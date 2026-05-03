@@ -1,37 +1,8 @@
 //! Heuristic detection of y/N-style confirmation prompts in free-form messages.
 
+use crate::input_spec::YesNoFormat;
 use regex::Regex;
 use once_cell::sync::Lazy;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum YesNoFormat {
-    /// Short form: user answers with "y" / "n"
-    YN,
-    /// Long form: user answers with "yes" / "no"
-    YesNo,
-    /// Claude Code's native permission picker ("❯ 1. Yes / 2. No" or with a 3rd
-    /// "don't ask again" option). Yes always = digit 1; Deny = Esc, which any
-    /// inquirer-style picker treats as cancel regardless of option count —
-    /// avoiding the 2-vs-3-option ambiguity of typing "2" or "3".
-    Numeric,
-}
-
-impl YesNoFormat {
-    pub fn yes_text(&self) -> &'static str {
-        match self {
-            YesNoFormat::YN => "y\n",
-            YesNoFormat::YesNo => "yes\n",
-            YesNoFormat::Numeric => "1\n",
-        }
-    }
-    pub fn no_text(&self) -> &'static str {
-        match self {
-            YesNoFormat::YN => "n\n",
-            YesNoFormat::YesNo => "no\n",
-            YesNoFormat::Numeric => "\x1b",
-        }
-    }
-}
 
 /// Detect y/N-style prompts. Returns Some(format) if match, None otherwise.
 pub fn detect_yn_prompt(msg: &str) -> Option<YesNoFormat> {
