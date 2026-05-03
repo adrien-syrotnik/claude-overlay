@@ -78,3 +78,74 @@ body { display: flex; justify-content: center; align-items: flex-start; }
 .btn-group .btn { max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .error-flash { background: rgba(239, 68, 68, 0.18); }
+
+/* Dense fallback: tighter typography when a row has lots of content */
+.notif-row.dense { padding: 4px 4px; gap: 6px; }
+.notif-row.dense .message {
+  font-size: 12px;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Inline checkbox list (multi-choice short) */
+.checkbox-list { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.checkbox-list .cb { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; cursor: pointer; }
+.checkbox-list .cb input { accent-color: #4aa0ff; }
+
+/* Text input field */
+.btn-group .text-input {
+  background: rgba(255,255,255,0.08);
+  color: #f1f1f3;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  min-width: 200px;
+  outline: none;
+}
+.btn-group .text-input:focus {
+  border-color: #4aa0ff;
+  background: rgba(255,255,255,0.12);
+}
+
+/* Popover anchored under the trigger button */
+.popover {
+  position: fixed;
+  background: #18181c;
+  color: #f1f1f3;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.55);
+  padding: 4px;
+  min-width: 240px;
+  max-height: 320px;
+  overflow-y: auto;
+  z-index: 1000;
+  animation: popIn 120ms ease-out;
+}
+@keyframes popIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+.popover-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  background: transparent;
+  color: #f1f1f3;
+  border: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+.popover-item:hover { background: rgba(255,255,255,0.08); }
+.popover-checkbox { flex-direction: row; align-items: center; gap: 8px; }
+.popover-checkbox input { accent-color: #4aa0ff; }
+.popover-desc { font-size: 11px; color: rgba(255,255,255,0.55); }
+.popover-other { border-top: 1px solid rgba(255,255,255,0.08); margin-top: 4px; padding-top: 10px; font-style: italic; }
+.popover-submit { border-top: 1px solid rgba(255,255,255,0.08); margin-top: 4px; padding-top: 10px; background: #4aa0ff; }
+.popover-submit:hover { background: #5aa8ff; }
