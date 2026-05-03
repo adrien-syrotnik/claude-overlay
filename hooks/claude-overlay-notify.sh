@@ -44,6 +44,21 @@ get_shell_pid() {
 }
 SHELL_PID=$(get_shell_pid)
 
+# Parse $TRANSCRIPT_PATH (JSONL) and return the most recent assistant tool_use
+# for Bash/Edit/Write/Read as a one-line JSON object {name, input}, or empty
+# string. Tolerates a flush race (file exists but trailing line incomplete).
+extract_pending_tool() {
+  local transcript="$1"
+  [ -z "$transcript" ] && { echo ""; return; }
+  [ -f "$transcript" ] || { echo ""; return; }
+  tail -n 50 "$transcript" 2>/dev/null \
+    | jq -c 'select(.type=="assistant") |
+             .message.content[]? |
+             select(.type=="tool_use" and (.name=="Bash" or .name=="Edit" or .name=="Write" or .name=="Read")) |
+             {name: .name, input: .input}' 2>/dev/null \
+    | tail -n 1
+}
+
 LOG_FILE=/tmp/claude-overlay-hook.log
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*" >> "$LOG_FILE" 2>/dev/null || true; }
 log "event=$EVENT source=$SOURCE shell_pid=$SHELL_PID basename=$BASENAME"
@@ -100,6 +115,35 @@ if [[ "$EVENT" == "PreToolUse" ]]; then
     jq -nc --arg r "$ANSWER" '{decision:"block",reason:$r}'
   fi
   exit 0
+fi
+
+TRANSCRIPT_PATH=$(jq -r '.transcript_path // empty' <<<"$PAYLOAD")
+if [[ "$EVENT" == "Notification" && "$NOTIFICATION_TYPE" == "permission_prompt" ]]; then
+  PENDING=$(extract_pending_tool "$TRANSCRIPT_PATH")
+  if [[ -n "$PENDING" ]]; then
+    PEND_TOOL=$(jq -r '.name' <<<"$PENDING")
+    case "$PEND_TOOL" in
+      Bash)
+        CMD=$(jq -r '.input.command // empty' <<<"$PENDING")
+        [ -n "$CMD" ] && MESSAGE="Bash: $CMD"
+        ;;
+      Edit)
+        FP=$(jq -r '.input.file_path // empty' <<<"$PENDING")
+        [ -n "$FP" ] && MESSAGE="Edit: $FP"
+        ;;
+      Write)
+        FP=$(jq -r '.input.file_path // empty' <<<"$PENDING")
+        [ -n "$FP" ] && MESSAGE="Write: $FP"
+        ;;
+      Read)
+        FP=$(jq -r '.input.file_path // empty' <<<"$PENDING")
+        [ -n "$FP" ] && MESSAGE="Read: $FP"
+        ;;
+    esac
+    log "permission_prompt enrichment: tool=$PEND_TOOL message='$MESSAGE'"
+  else
+    log "permission_prompt: no recent tool_use in transcript, keeping brut message"
+  fi
 fi
 
 if [[ "$EVENT" == "Stop" && -z "$MESSAGE" ]]; then
