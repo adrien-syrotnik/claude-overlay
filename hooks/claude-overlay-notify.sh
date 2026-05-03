@@ -55,10 +55,30 @@ log "raw_payload=$PAYLOAD"
 if [[ "$EVENT" == "PreToolUse" ]]; then
   TOOL=$(jq -r '.tool_name // empty' <<<"$PAYLOAD")
   if [[ "$TOOL" != "AskUserQuestion" ]]; then exit 0; fi
-  QUESTION=$(jq -r '.tool_input.question // empty' <<<"$PAYLOAD")
-  # AskUserQuestion options can be either ["A","B"] or [{"label":"A"}, …].
-  OPTIONS_JSON=$(jq -c '[(.tool_input.options // [])[] | if type == "string" then . else (.label // empty) end] | map(select(length > 0))' <<<"$PAYLOAD")
-  if [[ -z "$OPTIONS_JSON" || "$OPTIONS_JSON" == "[]" ]]; then exit 0; fi
+
+  # New AskUserQuestion API: tool_input.questions is a 1-4 array. We support
+  # only questions[0] in this iteration; multi-question support is a TODO.
+  QUESTION=$(jq -r '.tool_input.questions[0].question // empty' <<<"$PAYLOAD")
+  MULTI=$(jq -r   '.tool_input.questions[0].multiSelect // false' <<<"$PAYLOAD")
+  OPTIONS_JSON=$(jq -c '
+    [(.tool_input.questions[0].options // [])[] |
+      if type == "string" then {label: ., description: null}
+      else {label: (.label // empty), description: (.description // null)} end] |
+    map(select(.label | length > 0))
+  ' <<<"$PAYLOAD")
+
+  if [[ -z "$QUESTION" || -z "$OPTIONS_JSON" || "$OPTIONS_JSON" == "[]" ]]; then
+    log "AskUserQuestion: empty question or options, skipping (payload schema?)"
+    exit 0
+  fi
+
+  KIND="single_choice"
+  if [[ "$MULTI" == "true" ]]; then KIND="multi_choice"; fi
+
+  INPUT_SPEC=$(jq -nc \
+    --arg kind "$KIND" \
+    --argjson options "$OPTIONS_JSON" \
+    '{kind: $kind, options: $options, allow_other: true, delivery: "block_response"}')
 
   ASK_PAYLOAD=$(jq -nc \
     --arg event "AskQuestion" \
@@ -71,8 +91,8 @@ if [[ "$EVENT" == "PreToolUse" ]]; then
     --arg vscode_pid "${VSCODE_PID:-}" \
     --argjson shell_pid "${SHELL_PID:-0}" \
     --argjson timestamp_ms "$(date +%s%3N)" \
-    --argjson options "$OPTIONS_JSON" \
-    '{event: $event, cwd: $cwd, message: $message, source_type: $source_type, source_basename: $source_basename, wt_session: $wt_session, vscode_ipc_hook: $vscode_ipc_hook, vscode_pid: $vscode_pid, shell_pid: $shell_pid, timestamp_ms: $timestamp_ms, options: $options}')
+    --argjson input_spec "$INPUT_SPEC" \
+    '{event: $event, cwd: $cwd, message: $message, source_type: $source_type, source_basename: $source_basename, wt_session: $wt_session, vscode_ipc_hook: $vscode_ipc_hook, vscode_pid: $vscode_pid, shell_pid: $shell_pid, timestamp_ms: $timestamp_ms, input_spec: $input_spec, notification_type: ""}')
 
   RESP=$(echo "$ASK_PAYLOAD" | claude-overlay.exe --stdin-ask 2>/dev/null || true)
   ANSWER=$(jq -r '.answer // empty' <<<"$RESP" 2>/dev/null || echo "")
