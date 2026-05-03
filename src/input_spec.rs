@@ -1,9 +1,9 @@
 //! Input specification for overlay rows. Describes what kind of input UI
 //! the user needs to provide and how the answer is delivered back.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum YesNoFormat {
     /// Short form: "y" / "n"
@@ -31,14 +31,14 @@ impl YesNoFormat {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Choice {
     pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Delivery {
     /// SendInput keystrokes to the source terminal window.
@@ -47,7 +47,7 @@ pub enum Delivery {
     BlockResponse,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InputSpec {
     None,
@@ -136,5 +136,31 @@ mod tests {
     fn yes_no_format_keystrokes() {
         assert_eq!(YesNoFormat::YN.yes_text(), "y\n");
         assert_eq!(YesNoFormat::Numeric.no_text(), "\x1b");
+    }
+
+    #[test]
+    fn deserialize_single_choice_from_hook_json() {
+        let raw = json!({
+            "kind": "single_choice",
+            "options": [{"label": "A"}, {"label": "B", "description": "second"}],
+            "allow_other": false,
+            "delivery": "block_response",
+        });
+        let spec: InputSpec = serde_json::from_value(raw).unwrap();
+        match spec {
+            InputSpec::SingleChoice { options, allow_other, delivery: _ } => {
+                assert_eq!(options.len(), 2);
+                assert_eq!(options[1].description.as_deref(), Some("second"));
+                assert!(!allow_other);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn deserialize_yes_no_from_hook_json() {
+        let raw = json!({"kind": "yes_no", "format": "yn", "delivery": "keystroke"});
+        let spec: InputSpec = serde_json::from_value(raw).unwrap();
+        assert!(matches!(spec, InputSpec::YesNo { format: YesNoFormat::YN, delivery: Delivery::Keystroke }));
     }
 }

@@ -52,20 +52,17 @@ pub struct HookPayload {
     pub vscode_ipc_hook: String,
     pub vscode_pid: String,
     pub timestamp_ms: u64,
-    /// Claude Code's notification subkind: "permission_prompt", "idle_prompt", …
-    /// Empty for non-Notification events. Permission prompts must always show
-    /// the overlay even if the source terminal is foreground.
+    /// "permission_prompt", "idle_prompt", or empty.
     #[serde(default)]
     pub notification_type: String,
-    /// AskUserQuestion options. When non-empty, daemon holds the TCP socket
-    /// open and replies with the user's choice once they click in the overlay.
-    #[serde(default)]
-    pub options: Vec<String>,
-    /// Outermost shell PID under VS Code Remote-WSL (`terminal.processId`).
-    /// Lets the extension match the exact terminal Claude is running in even
-    /// when several terminals share the same cwd. 0 = unknown.
+    /// Outermost shell PID under VS Code Remote-WSL. 0 = unknown.
     #[serde(default)]
     pub shell_pid: u32,
+    /// New: input specification produced by the hook bash. Absent for
+    /// `Stop`/generic `Notification`. Deserialized directly into `InputSpec`
+    /// via the `kind` tag.
+    #[serde(default)]
+    pub input_spec: Option<crate::input_spec::InputSpec>,
 }
 
 /// Map from notif_id → oneshot sender for the user's chosen answer. Set on
@@ -110,21 +107,28 @@ fn parse_source(s: &str) -> SourceType {
 
 /// Build NotifState from raw payload. Full matching/skip-foreground happens in daemon loop.
 pub fn payload_to_state(p: HookPayload) -> NotifState {
-    use crate::heuristic::YesNoFormat;
-    let options = if p.options.is_empty() { None } else { Some(p.options) };
+    use crate::input_spec::{Delivery, InputSpec, YesNoFormat};
     let shell_pid = if p.shell_pid == 0 { None } else { Some(p.shell_pid) };
     let notification_type = if p.notification_type.is_empty() { None } else { Some(p.notification_type) };
-    // Claude Code's permission_prompt fires its native "❯ 1. Yes / 2. No"
-    // picker. The message has no [y/n] markers, so detect_yn_prompt returns
-    // None — but we know from the type that this IS a yes/no, just rendered
-    // by a numeric picker. Use Numeric format (sends "1\n" / Esc).
-    let yesno_format = detect_yn_prompt(&p.message).or_else(|| {
-        if notification_type.as_deref() == Some("permission_prompt") {
-            Some(YesNoFormat::Numeric)
-        } else {
-            None
+
+    // Resolve InputSpec. Priority:
+    // 1. Hook explicitly provided one (AskUserQuestion path) — use it.
+    // 2. Permission_prompt — Claude Code's numeric picker (yes_no / Numeric).
+    // 3. Free-form yes/no detected in the message text.
+    // 4. None.
+    let input = if let Some(spec) = p.input_spec {
+        spec
+    } else if notification_type.as_deref() == Some("permission_prompt") {
+        InputSpec::YesNo {
+            format: YesNoFormat::Numeric,
+            delivery: Delivery::Keystroke,
         }
-    });
+    } else if let Some(format) = detect_yn_prompt(&p.message) {
+        InputSpec::YesNo { format, delivery: Delivery::Keystroke }
+    } else {
+        InputSpec::None
+    };
+
     NotifState {
         id: String::new(),
         event: parse_event(&p.event),
@@ -132,8 +136,7 @@ pub fn payload_to_state(p: HookPayload) -> NotifState {
         source_basename: p.source_basename,
         cwd: p.cwd,
         message: p.message.clone(),
-        yesno_format,
-        options,
+        input,
         target_ext_id: None,
         vscode_ipc_hook: if p.vscode_ipc_hook.is_empty() { None } else { Some(p.vscode_ipc_hook) },
         wt_session: if p.wt_session.is_empty() { None } else { Some(p.wt_session) },
@@ -199,13 +202,13 @@ pub async fn run_hook_listener_with_app(
             }
             // Skip the overlay only for fire-and-forget notifs whose source
             // terminal is already foreground. NEVER skip when the user must
-            // make a blocking decision: AskQuestion (with options) or
+            // make a blocking decision: AskQuestion (with input) or
             // permission_prompt (Claude Code's "Claude needs your permission
             // to use X") — those need to be visible even if the user is
             // looking at the terminal.
-            let has_options = state.options.is_some();
+            let needs_answer = !matches!(state.input, crate::input_spec::InputSpec::None);
             let is_permission = state.notification_type.as_deref() == Some("permission_prompt");
-            let must_show = has_options || is_permission;
+            let must_show = needs_answer || is_permission;
             if !must_show && is_terminal_foreground(&ctx, &state).await {
                 let _ = reader.get_mut().write_all(
                     b"{\"ok\":true,\"displayed\":false,\"reason\":\"foreground_skip\"}\n"
@@ -228,7 +231,7 @@ pub async fn run_hook_listener_with_app(
             with_id.id = id.clone();
             crate::tauri_app::emit_notif_new(&app, &with_id);
 
-            if has_options {
+            if needs_answer {
                 // Register oneshot, await user click in overlay, write answer back.
                 let (tx, rx) = oneshot::channel::<String>();
                 {
@@ -371,7 +374,7 @@ pub async fn run_foreground_watcher(ctx: Arc<DaemonCtx>, app: tauri::AppHandle) 
         let fg_title_lc = fg_title.to_lowercase();
         for n in &notifs {
             // Interactive notifs require a click — never auto-dismiss them.
-            if n.options.is_some() || n.yesno_format.is_some() { continue; }
+            if !matches!(n.input, crate::input_spec::InputSpec::None) { continue; }
             let needle = n.source_basename.to_lowercase();
             let class_ok = match n.source_type {
                 SourceType::Wt => fg_class.eq_ignore_ascii_case(focus_win32::CLASS_WT),
@@ -412,5 +415,71 @@ async fn is_terminal_foreground(ctx: &DaemonCtx, state: &NotifState) -> bool {
                 .unwrap_or(false)
         }
         SourceType::Unknown => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::input_spec::{Delivery, InputSpec, YesNoFormat};
+
+    fn base_payload() -> HookPayload {
+        HookPayload {
+            event: "Notification".into(),
+            cwd: "/x".into(),
+            message: "".into(),
+            source_type: "vscode".into(),
+            source_basename: "x".into(),
+            wt_session: "".into(),
+            vscode_ipc_hook: "".into(),
+            vscode_pid: "".into(),
+            timestamp_ms: 0,
+            notification_type: "".into(),
+            shell_pid: 0,
+            input_spec: None,
+        }
+    }
+
+    #[test]
+    fn permission_prompt_becomes_numeric_yes_no() {
+        let mut p = base_payload();
+        p.notification_type = "permission_prompt".into();
+        p.message = "Claude needs your permission to use Bash".into();
+        let s = payload_to_state(p);
+        assert!(matches!(
+            s.input,
+            InputSpec::YesNo { format: YesNoFormat::Numeric, delivery: Delivery::Keystroke }
+        ));
+    }
+
+    #[test]
+    fn explicit_input_spec_overrides_heuristics() {
+        let mut p = base_payload();
+        p.event = "AskQuestion".into();
+        p.input_spec = Some(InputSpec::SingleChoice {
+            options: vec![],
+            allow_other: false,
+            delivery: Delivery::BlockResponse,
+        });
+        let s = payload_to_state(p);
+        assert!(matches!(s.input, InputSpec::SingleChoice { .. }));
+    }
+
+    #[test]
+    fn yn_marker_in_message_yields_yes_no_keystroke() {
+        let mut p = base_payload();
+        p.message = "Proceed? [y/N]".into();
+        let s = payload_to_state(p);
+        assert!(matches!(
+            s.input,
+            InputSpec::YesNo { format: YesNoFormat::YN, delivery: Delivery::Keystroke }
+        ));
+    }
+
+    #[test]
+    fn plain_notification_yields_none() {
+        let p = base_payload();
+        let s = payload_to_state(p);
+        assert!(matches!(s.input, InputSpec::None));
     }
 }
