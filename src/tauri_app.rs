@@ -112,7 +112,7 @@ pub async fn notif_focus(
         if let Some(ext_id) = &n.target_ext_id {
             let res = send_command(
                 &ctx.registry, &ctx.pending, ext_id,
-                json!({"type": "FOCUS", "cwd": n.cwd}),
+                json!({"type": "FOCUS", "cwd": n.cwd, "pid": n.shell_pid.unwrap_or(0)}),
                 500,
             ).await;
             vscode_ok = res.as_ref().map(|v| v.get("ok").and_then(|b| b.as_bool()).unwrap_or(false)).unwrap_or(false);
@@ -151,7 +151,7 @@ async fn do_send_async(answer: &str, id: &str, app: &AppHandle, ctx: &DaemonCtx)
         if let Some(ext_id) = &n.target_ext_id {
             let res = send_command(
                 &ctx.registry, &ctx.pending, ext_id,
-                json!({"type": "SEND_TEXT", "cwd": n.cwd, "text": text}),
+                json!({"type": "SEND_TEXT", "cwd": n.cwd, "pid": n.shell_pid.unwrap_or(0), "text": text}),
                 500,
             ).await;
             ok = res.as_ref().map(|v| v.get("ok").and_then(|b| b.as_bool()).unwrap_or(false)).unwrap_or(false);

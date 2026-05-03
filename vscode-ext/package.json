@@ -2,11 +2,11 @@
   "name": "claude-overlay-focus",
   "displayName": "Claude Overlay Focus",
   "description": "Bridges Claude Code overlay to VS Code terminals",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "adrie-local",
   "engines": { "vscode": "^1.85.0" },
   "activationEvents": ["onStartupFinished"],
-  "extensionKind": ["ui"],
+  "extensionKind": ["workspace"],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [

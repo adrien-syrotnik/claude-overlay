@@ -37,6 +37,12 @@ pub struct NotifState {
     pub target_ext_id: Option<String>,
     pub vscode_ipc_hook: Option<String>,
     pub wt_session: Option<String>,
+    /// Outermost shell PID for the terminal Claude runs in. Used by the VS Code
+    /// extension to disambiguate when multiple terminals share a cwd.
+    pub shell_pid: Option<u32>,
+    /// "permission_prompt" / "idle_prompt" / None. Drives whether the overlay
+    /// must show even when the source terminal is foreground.
+    pub notification_type: Option<String>,
     #[serde(skip)]
     pub created_at: Instant,
 }
@@ -47,6 +53,7 @@ impl Serialize for YesNoFormat {
         s.serialize_str(match self {
             YesNoFormat::YN => "y_n",
             YesNoFormat::YesNo => "yes_no",
+            YesNoFormat::Numeric => "numeric",
         })
     }
 }
@@ -120,6 +127,8 @@ mod tests {
             target_ext_id: None,
             vscode_ipc_hook: None,
             wt_session: None,
+            shell_pid: None,
+            notification_type: None,
             created_at: Instant::now(),
         }
     }

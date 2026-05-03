@@ -52,10 +52,20 @@ pub struct HookPayload {
     pub vscode_ipc_hook: String,
     pub vscode_pid: String,
     pub timestamp_ms: u64,
+    /// Claude Code's notification subkind: "permission_prompt", "idle_prompt", …
+    /// Empty for non-Notification events. Permission prompts must always show
+    /// the overlay even if the source terminal is foreground.
+    #[serde(default)]
+    pub notification_type: String,
     /// AskUserQuestion options. When non-empty, daemon holds the TCP socket
     /// open and replies with the user's choice once they click in the overlay.
     #[serde(default)]
     pub options: Vec<String>,
+    /// Outermost shell PID under VS Code Remote-WSL (`terminal.processId`).
+    /// Lets the extension match the exact terminal Claude is running in even
+    /// when several terminals share the same cwd. 0 = unknown.
+    #[serde(default)]
+    pub shell_pid: u32,
 }
 
 /// Map from notif_id → oneshot sender for the user's chosen answer. Set on
@@ -100,7 +110,21 @@ fn parse_source(s: &str) -> SourceType {
 
 /// Build NotifState from raw payload. Full matching/skip-foreground happens in daemon loop.
 pub fn payload_to_state(p: HookPayload) -> NotifState {
+    use crate::heuristic::YesNoFormat;
     let options = if p.options.is_empty() { None } else { Some(p.options) };
+    let shell_pid = if p.shell_pid == 0 { None } else { Some(p.shell_pid) };
+    let notification_type = if p.notification_type.is_empty() { None } else { Some(p.notification_type) };
+    // Claude Code's permission_prompt fires its native "❯ 1. Yes / 2. No"
+    // picker. The message has no [y/n] markers, so detect_yn_prompt returns
+    // None — but we know from the type that this IS a yes/no, just rendered
+    // by a numeric picker. Use Numeric format (sends "1\n" / Esc).
+    let yesno_format = detect_yn_prompt(&p.message).or_else(|| {
+        if notification_type.as_deref() == Some("permission_prompt") {
+            Some(YesNoFormat::Numeric)
+        } else {
+            None
+        }
+    });
     NotifState {
         id: String::new(),
         event: parse_event(&p.event),
@@ -108,11 +132,13 @@ pub fn payload_to_state(p: HookPayload) -> NotifState {
         source_basename: p.source_basename,
         cwd: p.cwd,
         message: p.message.clone(),
-        yesno_format: detect_yn_prompt(&p.message),
+        yesno_format,
         options,
         target_ext_id: None,
         vscode_ipc_hook: if p.vscode_ipc_hook.is_empty() { None } else { Some(p.vscode_ipc_hook) },
         wt_session: if p.wt_session.is_empty() { None } else { Some(p.wt_session) },
+        shell_pid,
+        notification_type,
         created_at: Instant::now(),
     }
 }
@@ -148,25 +174,39 @@ pub async fn run_hook_listener_with_app(
             };
             let mut state = payload_to_state(payload);
             if state.source_type == SourceType::Vscode {
-                // Try exact match by IPC hook first
+                // 1. Exact match by IPC hook (per-VS-Code-window identifier).
                 if let Some(hook) = &state.vscode_ipc_hook {
                     if let Some(id) = ctx.registry.find_by_ipc_hook(hook) {
                         state.target_ext_id = Some(id);
                     }
                 }
-                // Fallback: match by terminal cwd (most recently focused)
+                // 2. Match by terminal shell PID (per-terminal identifier under
+                //    Remote-WSL — picks the right one when multiple terminals
+                //    share a cwd).
+                if state.target_ext_id.is_none() {
+                    if let Some(pid) = state.shell_pid {
+                        if let Some(id) = ctx.registry.find_by_terminal_pid(pid) {
+                            state.target_ext_id = Some(id);
+                        }
+                    }
+                }
+                // 3. Fallback: match by terminal cwd (most recently focused window).
                 if state.target_ext_id.is_none() {
                     if let Some(id) = ctx.registry.find_by_terminal_cwd(&state.cwd) {
                         state.target_ext_id = Some(id);
                     }
                 }
             }
-            // For AskQuestion (with options), we ALWAYS show the overlay even
-            // if the source terminal is foreground — the user must explicitly
-            // pick an option. Skip-foreground only applies to fire-and-forget
-            // notifs.
+            // Skip the overlay only for fire-and-forget notifs whose source
+            // terminal is already foreground. NEVER skip when the user must
+            // make a blocking decision: AskQuestion (with options) or
+            // permission_prompt (Claude Code's "Claude needs your permission
+            // to use X") — those need to be visible even if the user is
+            // looking at the terminal.
             let has_options = state.options.is_some();
-            if !has_options && is_terminal_foreground(&ctx, &state).await {
+            let is_permission = state.notification_type.as_deref() == Some("permission_prompt");
+            let must_show = has_options || is_permission;
+            if !must_show && is_terminal_foreground(&ctx, &state).await {
                 let _ = reader.get_mut().write_all(
                     b"{\"ok\":true,\"displayed\":false,\"reason\":\"foreground_skip\"}\n"
                 ).await;
@@ -364,7 +404,7 @@ async fn is_terminal_foreground(ctx: &DaemonCtx, state: &NotifState) -> bool {
             let Some(ext_id) = &state.target_ext_id else { return false; };
             let res = send_command(
                 &ctx.registry, &ctx.pending, ext_id,
-                json!({"type": "IS_ACTIVE_TERMINAL", "cwd": state.cwd}),
+                json!({"type": "IS_ACTIVE_TERMINAL", "cwd": state.cwd, "pid": state.shell_pid.unwrap_or(0)}),
                 200,
             ).await;
             res.ok()

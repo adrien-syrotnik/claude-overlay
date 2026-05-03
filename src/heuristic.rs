@@ -9,6 +9,11 @@ pub enum YesNoFormat {
     YN,
     /// Long form: user answers with "yes" / "no"
     YesNo,
+    /// Claude Code's native permission picker ("❯ 1. Yes / 2. No" or with a 3rd
+    /// "don't ask again" option). Yes always = digit 1; Deny = Esc, which any
+    /// inquirer-style picker treats as cancel regardless of option count —
+    /// avoiding the 2-vs-3-option ambiguity of typing "2" or "3".
+    Numeric,
 }
 
 impl YesNoFormat {
@@ -16,12 +21,14 @@ impl YesNoFormat {
         match self {
             YesNoFormat::YN => "y\n",
             YesNoFormat::YesNo => "yes\n",
+            YesNoFormat::Numeric => "1\n",
         }
     }
     pub fn no_text(&self) -> &'static str {
         match self {
             YesNoFormat::YN => "n\n",
             YesNoFormat::YesNo => "no\n",
+            YesNoFormat::Numeric => "\x1b",
         }
     }
 }

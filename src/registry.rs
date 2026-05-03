@@ -68,6 +68,15 @@ impl Registry {
             .map(|e| e.ext_id.clone())
     }
 
+    /// Find the extension hosting a terminal with the given shell PID. Strongest
+    /// per-terminal signal under VS Code Remote-WSL (matches `terminal.processId`).
+    pub fn find_by_terminal_pid(&self, pid: u32) -> Option<String> {
+        self.inner.lock().unwrap()
+            .values()
+            .find(|e| e.terminals.iter().any(|t| t.pid == Some(pid)))
+            .map(|e| e.ext_id.clone())
+    }
+
     /// Find extension(s) having a terminal with the given cwd. If multiple,
     /// return the one whose window was most recently focused.
     pub fn find_by_terminal_cwd(&self, cwd: &str) -> Option<String> {

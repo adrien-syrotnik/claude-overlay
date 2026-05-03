@@ -9,10 +9,10 @@ use std::time::Duration;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-    KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_RETURN,
+    KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_ESCAPE, VK_RETURN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowTextW, IsWindowVisible,
+    EnumWindows, GetClassNameW, GetForegroundWindow, GetWindowTextW, IsIconic, IsWindowVisible,
     SetForegroundWindow, ShowWindow, SW_RESTORE,
 };
 
@@ -69,7 +69,11 @@ pub fn foreground_info() -> (String, String) {
 
 pub fn focus_hwnd(hwnd: HWND) -> Result<()> {
     unsafe {
-        let _ = ShowWindow(hwnd, SW_RESTORE);
+        // Only un-minimize. SW_RESTORE on a maximized window un-maximizes it —
+        // we'd resize the user's layout just to focus.
+        if IsIconic(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        }
         if !SetForegroundWindow(hwnd).as_bool() {
             return Err(anyhow!("SetForegroundWindow failed"));
         }
@@ -92,13 +96,20 @@ pub fn send_keys_safe(hwnd: HWND, text: &str) -> Result<()> {
 fn send_keys_raw(text: &str) {
     let mut inputs: Vec<INPUT> = Vec::with_capacity(text.len() * 2);
     for ch in text.chars() {
-        if ch == '\n' {
-            inputs.push(kb_input(VK_RETURN, 0, false));
-            inputs.push(kb_input(VK_RETURN, 0, true));
-        } else {
-            let code = ch as u16;
-            inputs.push(kb_input(VIRTUAL_KEY(0), code, false));
-            inputs.push(kb_input(VIRTUAL_KEY(0), code, true));
+        match ch {
+            '\n' => {
+                inputs.push(kb_input(VK_RETURN, 0, false));
+                inputs.push(kb_input(VK_RETURN, 0, true));
+            }
+            '\x1b' => {
+                inputs.push(kb_input(VK_ESCAPE, 0, false));
+                inputs.push(kb_input(VK_ESCAPE, 0, true));
+            }
+            _ => {
+                let code = ch as u16;
+                inputs.push(kb_input(VIRTUAL_KEY(0), code, false));
+                inputs.push(kb_input(VIRTUAL_KEY(0), code, true));
+            }
         }
     }
     unsafe {

@@ -58,9 +58,16 @@ if (!tauri || !tauri.event || !tauri.core) {
         group.append(b);
       });
     } else if (state.yesno_format) {
-      const y = document.createElement('button'); y.className = 'btn btn-accent'; y.textContent = 'Yes';
+      // permission_prompt is Claude Code's native picker — label buttons
+      // Allow/Deny since "Yes/No" is misleading for the 3-option case where
+      // option 2 is "Yes, and don't ask again". Allow always sends "1" (Yes),
+      // Deny sends Esc (cancels the picker = denial).
+      const isPerm = state.notification_type === 'permission_prompt';
+      const y = document.createElement('button'); y.className = 'btn btn-accent';
+      y.textContent = isPerm ? 'Allow' : 'Yes';
       y.onclick = () => invoke('notif_send_yes', { id: state.id });
-      const n = document.createElement('button'); n.className = 'btn btn-accent no'; n.textContent = 'No';
+      const n = document.createElement('button'); n.className = 'btn btn-accent no';
+      n.textContent = isPerm ? 'Deny' : 'No';
       n.onclick = () => invoke('notif_send_no', { id: state.id });
       group.append(y, n);
     }
