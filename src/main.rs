@@ -4,6 +4,7 @@ mod autostart;
 mod daemon;
 mod focus_win32;
 mod heuristic;
+mod input_spec;
 mod registry;
 mod store;
 mod tauri_app;
