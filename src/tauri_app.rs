@@ -142,8 +142,15 @@ pub async fn notif_focus(
 }
 
 async fn do_send_async(answer: &str, id: &str, app: &AppHandle, ctx: &DaemonCtx) {
+    use crate::input_spec::{Delivery, InputSpec};
     let Some(n) = ctx.store.get(id) else { return; };
-    let Some(fmt) = n.yesno_format else { return; };
+    // Only YesNo with Keystroke delivery needs SendInput. Other variants are
+    // answered via BlockResponse on the held-open hook stdin path (notif_answer
+    // / notif_answer_multi / notif_text).
+    let fmt = match &n.input {
+        InputSpec::YesNo { format, delivery: Delivery::Keystroke } => *format,
+        _ => return,
+    };
     let text = match answer { "yes" => fmt.yes_text(), _ => fmt.no_text() };
 
     let mut ok = false;
@@ -192,4 +199,40 @@ pub async fn notif_send_no(
 ) -> Result<(), String> {
     do_send_async("no", &id, &app, &ctx).await;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn notif_yes_no(
+    id: String, choice: bool,
+    app: AppHandle, ctx: tauri::State<'_, Arc<DaemonCtx>>,
+) -> Result<(), String> {
+    do_send_async(if choice { "yes" } else { "no" }, &id, &app, &ctx).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn notif_answer_multi(
+    id: String, answers: Vec<String>,
+    app: AppHandle, ctx: tauri::State<'_, Arc<DaemonCtx>>,
+) {
+    let joined = answers.join(", ");
+    if let Some(tx) = ctx.pending_answers.lock().unwrap().remove(&id) {
+        let _ = tx.send(joined);
+    }
+    ctx.store.remove(&id);
+    emit_notif_remove(&app, &id);
+    if ctx.store.len() == 0 { hide_pill(&app); }
+}
+
+#[tauri::command]
+pub fn notif_text(
+    id: String, text: String,
+    app: AppHandle, ctx: tauri::State<'_, Arc<DaemonCtx>>,
+) {
+    if let Some(tx) = ctx.pending_answers.lock().unwrap().remove(&id) {
+        let _ = tx.send(text);
+    }
+    ctx.store.remove(&id);
+    emit_notif_remove(&app, &id);
+    if ctx.store.len() == 0 { hide_pill(&app); }
 }

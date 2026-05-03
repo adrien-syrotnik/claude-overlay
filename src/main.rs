@@ -87,6 +87,9 @@ fn run_daemon() -> Result<()> {
             tauri_app::notif_send_yes,
             tauri_app::notif_send_no,
             tauri_app::notif_answer,
+            tauri_app::notif_yes_no,
+            tauri_app::notif_answer_multi,
+            tauri_app::notif_text,
             tauri_app::set_overlay_height,
         ])
         .setup(move |app| {
