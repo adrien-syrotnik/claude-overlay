@@ -1,6 +1,6 @@
 //! In-memory store of live notifications displayed in the overlay.
 
-use crate::input_spec::YesNoFormat;
+use crate::input_spec::InputSpec;
 use serde::Serialize;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -30,18 +30,13 @@ pub struct NotifState {
     pub source_basename: String,
     pub cwd: String,
     pub message: String,
-    pub yesno_format: Option<YesNoFormat>,
-    /// AskUserQuestion options. When set, UI renders one button per option and
-    /// the daemon waits for the user's choice on a held-open TCP connection.
-    pub options: Option<Vec<String>>,
+    /// What input UI the row needs (none / yes-no / single / multi / text).
+    /// Replaces the old `yesno_format` + `options` pair.
+    pub input: InputSpec,
     pub target_ext_id: Option<String>,
     pub vscode_ipc_hook: Option<String>,
     pub wt_session: Option<String>,
-    /// Outermost shell PID for the terminal Claude runs in. Used by the VS Code
-    /// extension to disambiguate when multiple terminals share a cwd.
     pub shell_pid: Option<u32>,
-    /// "permission_prompt" / "idle_prompt" / None. Drives whether the overlay
-    /// must show even when the source terminal is foreground.
     pub notification_type: Option<String>,
     #[serde(skip)]
     pub created_at: Instant,
@@ -112,8 +107,7 @@ mod tests {
             source_basename: "myproject".into(),
             cwd: "/home/user/code/myproject".into(),
             message: msg.into(),
-            yesno_format: None,
-            options: None,
+            input: InputSpec::None,
             target_ext_id: None,
             vscode_ipc_hook: None,
             wt_session: None,
