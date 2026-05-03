@@ -131,7 +131,8 @@ if (!tauri || !tauri.event || !tauri.core) {
     refreshStatus(total);
 
     const visibleRowCount = visible.length + (overflowCount > 0 ? 1 : 0);
-    invoke('set_overlay_height', { rows: visibleRowCount });
+    // TODO Task 9: pass real denseRows and popoverOpen.
+    invoke('set_overlay_height', { rows: visibleRowCount, denseRows: 0, popoverOpen: false });
   }
 
   function addNotif(state) {

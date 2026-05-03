@@ -13,7 +13,7 @@
         "label": "overlay",
         "url": "index.html",
         "title": "claude-overlay",
-        "width": 500,
+        "width": 720,
         "height": 80,
         "resizable": false,
         "decorations": false,

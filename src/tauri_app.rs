@@ -50,7 +50,7 @@ fn position_top_center_with_height(win: &tauri::WebviewWindow, height: f64) -> t
     let monitor = win.primary_monitor()?;
     if let Some(m) = monitor {
         let mw = m.size().width as f64 / m.scale_factor();
-        let target_w = 500.0;
+        let target_w = 720.0;
         let x = ((mw - target_w) / 2.0).max(0.0);
         win.set_position(LogicalPosition::new(x, 0.0))?;
         win.set_size(LogicalSize::new(target_w, height))?;
@@ -59,12 +59,18 @@ fn position_top_center_with_height(win: &tauri::WebviewWindow, height: f64) -> t
 }
 
 #[tauri::command]
-pub fn set_overlay_height(rows: u32, app: AppHandle) {
+pub fn set_overlay_height(rows: u32, dense_rows: u32, popover_open: bool, app: AppHandle) {
     if let Some(win) = app.get_webview_window("overlay") {
         let header = 36.0;
         let row = 40.0;
+        let dense_row = 64.0;
         let padding = 16.0;
-        let h = header + (rows as f64) * row + padding;
+        let popover_extra = if popover_open { 200.0 } else { 0.0 };
+        let h = header
+            + ((rows.saturating_sub(dense_rows)) as f64) * row
+            + (dense_rows as f64) * dense_row
+            + popover_extra
+            + padding;
         let _ = position_top_center_with_height(&win, h.max(60.0));
         let _ = win.set_always_on_top(true);
     }
