@@ -59,19 +59,9 @@ fn position_top_center_with_height(win: &tauri::WebviewWindow, height: f64) -> t
 }
 
 #[tauri::command]
-pub fn set_overlay_height(rows: u32, dense_rows: u32, popover_open: bool, app: AppHandle) {
+pub fn set_overlay_height_px(height: f64, app: AppHandle) {
     if let Some(win) = app.get_webview_window("overlay") {
-        let header = 36.0;
-        let row = 40.0;
-        let dense_row = 64.0;
-        let padding = 16.0;
-        let popover_extra = if popover_open { 200.0 } else { 0.0 };
-        let h = header
-            + ((rows.saturating_sub(dense_rows)) as f64) * row
-            + (dense_rows as f64) * dense_row
-            + popover_extra
-            + padding;
-        let _ = position_top_center_with_height(&win, h.max(60.0));
+        let _ = position_top_center_with_height(&win, height.max(40.0));
         let _ = win.set_always_on_top(true);
     }
 }

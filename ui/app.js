@@ -34,7 +34,19 @@ if (!tauri || !tauri.event || !tauri.core) {
   function mkButton(label, opts = {}) {
     const b = document.createElement('button');
     b.className = 'btn' + (opts.accent ? ' btn-accent' : '') + (opts.icon ? ' btn-icon' : '');
-    b.textContent = label;
+    if (opts.chevron) {
+      const lbl = document.createElement('span');
+      lbl.className = 'btn-label';
+      lbl.textContent = label;
+      const chev = document.createElement('span');
+      chev.className = 'btn-chevron';
+      chev.textContent = '▾'; // ▾
+      chev.setAttribute('aria-hidden', 'true');
+      b.append(lbl, chev);
+      b.classList.add('btn-with-chevron');
+    } else {
+      b.textContent = label;
+    }
     if (opts.title) b.title = opts.title;
     if (opts.onClick) b.onclick = opts.onClick;
     return b;
@@ -64,7 +76,7 @@ if (!tauri || !tauri.event || !tauri.core) {
   function renderSingleChoice(state, group, row) {
     const { options, allow_other } = state.input;
     if (shouldUsePopover(options)) {
-      const trigger = mkButton('Choose ⌄', { accent: true,
+      const trigger = mkButton('Choose', { accent: true, chevron: true,
         onClick: (e) => openSinglePopover(state, options, allow_other, e.currentTarget) });
       group.append(trigger);
     } else {
@@ -84,7 +96,7 @@ if (!tauri || !tauri.event || !tauri.core) {
     const { options, allow_other } = state.input;
     const selected = new Set();
     if (shouldUsePopover(options)) {
-      const trigger = mkButton('Select… ⌄', { accent: true,
+      const trigger = mkButton('Select…', { accent: true, chevron: true,
         onClick: (e) => openMultiPopover(state, options, allow_other, e.currentTarget, selected) });
       group.append(trigger);
     } else {
@@ -151,7 +163,7 @@ if (!tauri || !tauri.event || !tauri.core) {
       activePopover.remove();
       activePopover = null;
       document.removeEventListener('click', popoverOutsideHandler, true);
-      invoke('set_overlay_height', { rows: states.size, denseRows: 0, popoverOpen: false });
+      syncOverlayHeight();
     }
   }
   function popoverOutsideHandler(e) {
@@ -167,8 +179,19 @@ if (!tauri || !tauri.event || !tauri.core) {
     document.body.appendChild(pop);
     activePopover = pop;
     setTimeout(() => document.addEventListener('click', popoverOutsideHandler, true), 0);
-    invoke('set_overlay_height', { rows: states.size, denseRows: 0, popoverOpen: true });
+    requestAnimationFrame(syncOverlayHeight);
     return pop;
+  }
+
+  function syncOverlayHeight() {
+    const pill = document.querySelector('.pill');
+    if (!pill) return;
+    let h = pill.getBoundingClientRect().height;
+    if (activePopover) {
+      const pr = activePopover.getBoundingClientRect();
+      h = Math.max(h, pr.bottom + 8);
+    }
+    invoke('set_overlay_height_px', { height: Math.ceil(h) });
   }
 
   function openSinglePopover(state, options, allowOther, triggerEl) {
@@ -320,13 +343,7 @@ if (!tauri || !tauri.event || !tauri.core) {
 
     refreshStatus(total);
 
-    const visibleRowCount = visible.length + (overflowCount > 0 ? 1 : 0);
-    const denseRows = visible.filter(s => {
-      const msgLen = (s.message || '').length;
-      const optsLen = (s.input && s.input.options || []).reduce((acc, o) => acc + (o.label || '').length, 0);
-      return msgLen + optsLen > 80;
-    }).length;
-    invoke('set_overlay_height', { rows: visibleRowCount, denseRows, popoverOpen: !!activePopover });
+    requestAnimationFrame(syncOverlayHeight);
   }
 
   function addNotif(state) {

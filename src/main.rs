@@ -90,7 +90,7 @@ fn run_daemon() -> Result<()> {
             tauri_app::notif_yes_no,
             tauri_app::notif_answer_multi,
             tauri_app::notif_text,
-            tauri_app::set_overlay_height,
+            tauri_app::set_overlay_height_px,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();

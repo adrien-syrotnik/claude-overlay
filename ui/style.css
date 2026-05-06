@@ -77,6 +77,22 @@ body { display: flex; justify-content: center; align-items: flex-start; }
 .btn-icon { padding: 4px 8px; }
 .btn-group .btn { max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+.btn-with-chevron {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  overflow: visible !important;
+}
+.btn-with-chevron .btn-label { line-height: 1; }
+.btn-with-chevron .btn-chevron {
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0.85;
+  transform: translateY(0);
+  display: inline-flex;
+  align-items: center;
+}
+
 .error-flash { background: rgba(239, 68, 68, 0.18); }
 
 /* Dense fallback: tighter typography when a row has lots of content */
