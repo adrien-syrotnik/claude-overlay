@@ -112,7 +112,24 @@ if [[ "$EVENT" == "PreToolUse" ]]; then
   RESP=$(echo "$ASK_PAYLOAD" | claude-overlay.exe --stdin-ask 2>/dev/null || true)
   ANSWER=$(jq -r '.answer // empty' <<<"$RESP" 2>/dev/null || echo "")
   if [[ -n "$ANSWER" ]]; then
-    jq -nc --arg r "$ANSWER" '{decision:"block",reason:$r}'
+    # AskUserQuestion-specific PreToolUse output: echo back the original
+    # questions array and provide an `answers` map. Bypasses Claude Code's
+    # native UI without rendering as a "blocking error". The legacy
+    # decision:block path is deprecated for PreToolUse per docs.
+    ORIG_QUESTIONS=$(jq -c '.tool_input.questions' <<<"$PAYLOAD")
+    jq -nc \
+      --arg q "$QUESTION" \
+      --arg a "$ANSWER" \
+      --argjson questions "$ORIG_QUESTIONS" \
+      '{
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          updatedInput: {
+            questions: $questions,
+            answers: { ($q): $a }
+          }
+        }
+      }'
   fi
   exit 0
 fi
