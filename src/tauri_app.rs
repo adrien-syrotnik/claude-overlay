@@ -2,11 +2,21 @@
 
 use crate::daemon::DaemonCtx;
 use crate::focus_win32;
+use crate::input_spec::Choice;
 use crate::store::{NotifState, SourceType};
 use crate::vscode_client::send_command;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PopoverData {
+    pub notif_id: String,
+    pub items: Vec<Choice>,
+    pub multi_select: bool,
+    pub allow_other: bool,
+}
 
 pub fn emit_notif_new(app: &AppHandle, state: &NotifState) {
     let _ = app.emit("notif:new", state.clone());
@@ -39,6 +49,15 @@ pub fn hide_pill(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("overlay") {
         let _ = win.hide();
     }
+}
+
+/// Hide the popover window and clear its state. Call from any notif lifecycle
+/// transition that ends the parent row (dismiss, answer, focus).
+fn force_close_popover(app: &AppHandle, ctx: &DaemonCtx) {
+    if let Some(pop) = app.get_webview_window("popover") {
+        let _ = pop.hide();
+    }
+    *ctx.popover_data.lock().unwrap() = None;
 }
 
 fn position_top_center(win: &tauri::WebviewWindow) -> tauri::Result<()> {
@@ -80,6 +99,7 @@ pub fn notif_dismiss(id: String, app: AppHandle, ctx: tauri::State<'_, Arc<Daemo
     }
     ctx.store.remove(&id);
     emit_notif_remove(&app, &id);
+    force_close_popover(&app, &ctx);
     if ctx.store.len() == 0 { hide_pill(&app); }
 }
 
@@ -93,6 +113,7 @@ pub fn notif_answer(
     }
     ctx.store.remove(&id);
     emit_notif_remove(&app, &id);
+    force_close_popover(&app, &ctx);
     if ctx.store.len() == 0 { hide_pill(&app); }
 }
 
@@ -133,6 +154,7 @@ pub async fn notif_focus(
     }
     ctx.store.remove(&id);
     emit_notif_remove(&app, &id);
+    force_close_popover(&app, &ctx);
     if ctx.store.len() == 0 { hide_pill(&app); }
     Ok(())
 }
@@ -217,6 +239,7 @@ pub fn notif_answer_multi(
     }
     ctx.store.remove(&id);
     emit_notif_remove(&app, &id);
+    force_close_popover(&app, &ctx);
     if ctx.store.len() == 0 { hide_pill(&app); }
 }
 
@@ -230,5 +253,72 @@ pub fn notif_text(
     }
     ctx.store.remove(&id);
     emit_notif_remove(&app, &id);
+    force_close_popover(&app, &ctx);
     if ctx.store.len() == 0 { hide_pill(&app); }
+}
+
+#[tauri::command]
+pub fn open_popover(
+    notif_id: String,
+    items: Vec<Choice>,
+    multi_select: bool,
+    allow_other: bool,
+    anchor_x: f64,
+    anchor_y: f64,
+    anchor_height: f64,
+    app: AppHandle,
+    ctx: tauri::State<'_, Arc<DaemonCtx>>,
+) -> Result<(), String> {
+    use tauri::{LogicalPosition, LogicalSize};
+    let main = app.get_webview_window("overlay").ok_or("no main window")?;
+    let pop = app.get_webview_window("popover").ok_or("no popover window")?;
+
+    let main_pos = main.outer_position().map_err(|e| e.to_string())?;
+    let scale = main.scale_factor().map_err(|e| e.to_string())?;
+    let main_x = main_pos.x as f64 / scale;
+    let main_y = main_pos.y as f64 / scale;
+
+    let screen_x = main_x + anchor_x;
+    let screen_y = main_y + anchor_y + anchor_height + 4.0;
+
+    let data = PopoverData {
+        notif_id, items, multi_select, allow_other,
+    };
+
+    *ctx.popover_data.lock().unwrap() = Some(data.clone());
+
+    pop.set_position(LogicalPosition::new(screen_x, screen_y))
+        .map_err(|e| e.to_string())?;
+    pop.set_size(LogicalSize::new(288.0, 100.0))
+        .map_err(|e| e.to_string())?;
+    pop.show().map_err(|e| e.to_string())?;
+    pop.set_always_on_top(true).map_err(|e| e.to_string())?;
+    let _ = pop.set_focus();
+
+    let _ = app.emit("popover:show", data);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn close_popover(
+    app: AppHandle,
+    ctx: tauri::State<'_, Arc<DaemonCtx>>,
+) {
+    if let Some(pop) = app.get_webview_window("popover") {
+        let _ = pop.hide();
+    }
+    *ctx.popover_data.lock().unwrap() = None;
+}
+
+#[tauri::command]
+pub fn get_popover_data(ctx: tauri::State<'_, Arc<DaemonCtx>>) -> Option<PopoverData> {
+    ctx.popover_data.lock().unwrap().clone()
+}
+
+#[tauri::command]
+pub fn set_popover_height_px(height: f64, app: AppHandle) {
+    use tauri::LogicalSize;
+    if let Some(pop) = app.get_webview_window("popover") {
+        let _ = pop.set_size(LogicalSize::new(288.0, height.max(40.0)));
+    }
 }

@@ -77,7 +77,7 @@ if (!tauri || !tauri.event || !tauri.core) {
     const { options, allow_other } = state.input;
     if (shouldUsePopover(options)) {
       const trigger = mkButton('Choose', { accent: true, chevron: true,
-        onClick: (e) => openSinglePopover(state, options, allow_other, e.currentTarget) });
+        onClick: (e) => openExternalPopover(state, options, allow_other, false, e.currentTarget) });
       group.append(trigger);
     } else {
       options.forEach(opt => {
@@ -97,7 +97,7 @@ if (!tauri || !tauri.event || !tauri.core) {
     const selected = new Set();
     if (shouldUsePopover(options)) {
       const trigger = mkButton('Select…', { accent: true, chevron: true,
-        onClick: (e) => openMultiPopover(state, options, allow_other, e.currentTarget, selected) });
+        onClick: (e) => openExternalPopover(state, options, allow_other, true, e.currentTarget) });
       group.append(trigger);
     } else {
       const list = document.createElement('span');
@@ -157,100 +157,24 @@ if (!tauri || !tauri.event || !tauri.core) {
     row.appendChild(newGroup);
   }
 
-  let activePopover = null;
-  function closeActivePopover() {
-    if (activePopover) {
-      activePopover.remove();
-      activePopover = null;
-      document.removeEventListener('click', popoverOutsideHandler, true);
-      syncOverlayHeight();
-    }
-  }
-  function popoverOutsideHandler(e) {
-    if (activePopover && !activePopover.contains(e.target)) closeActivePopover();
-  }
-  function mkPopover(triggerEl) {
-    closeActivePopover();
-    const pop = document.createElement('div');
-    pop.className = 'popover';
-    const r = triggerEl.getBoundingClientRect();
-    pop.style.left = `${r.left}px`;
-    pop.style.top = `${r.bottom + 4}px`;
-    document.body.appendChild(pop);
-    activePopover = pop;
-    setTimeout(() => document.addEventListener('click', popoverOutsideHandler, true), 0);
-    requestAnimationFrame(syncOverlayHeight);
-    return pop;
-  }
-
   function syncOverlayHeight() {
     const pill = document.querySelector('.pill');
     if (!pill) return;
-    let h = pill.getBoundingClientRect().height;
-    if (activePopover) {
-      const pr = activePopover.getBoundingClientRect();
-      h = Math.max(h, pr.bottom + 8);
-    }
+    const h = pill.getBoundingClientRect().height;
     invoke('set_overlay_height_px', { height: Math.ceil(h) });
   }
 
-  function openSinglePopover(state, options, allowOther, triggerEl) {
-    const pop = mkPopover(triggerEl);
-    options.forEach(opt => {
-      const item = document.createElement('button');
-      item.className = 'popover-item';
-      item.textContent = opt.label;
-      if (opt.description) {
-        const d = document.createElement('span');
-        d.className = 'popover-desc';
-        d.textContent = opt.description;
-        item.appendChild(d);
-      }
-      item.onclick = () => {
-        closeActivePopover();
-        invoke('notif_answer', { id: state.id, answer: opt.label });
-      };
-      pop.appendChild(item);
-    });
-    if (allowOther) {
-      const o = document.createElement('button');
-      o.className = 'popover-item popover-other';
-      o.textContent = 'Other…';
-      o.onclick = () => {
-        closeActivePopover();
-        const row = document.querySelector(`.notif-row[data-id="${state.id}"]`);
-        if (row) switchToText(row, state);
-      };
-      pop.appendChild(o);
-    }
-  }
-
-  function openMultiPopover(state, options, allowOther, triggerEl, selected) {
-    const pop = mkPopover(triggerEl);
-    options.forEach(opt => {
-      const item = document.createElement('label');
-      item.className = 'popover-item popover-checkbox';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.checked = selected.has(opt.label);
-      cb.onchange = () => cb.checked ? selected.add(opt.label) : selected.delete(opt.label);
-      item.append(cb, document.createTextNode(' ' + opt.label));
-      if (opt.description) {
-        const d = document.createElement('span');
-        d.className = 'popover-desc';
-        d.textContent = opt.description;
-        item.appendChild(d);
-      }
-      pop.appendChild(item);
-    });
-    const submit = document.createElement('button');
-    submit.className = 'popover-item popover-submit';
-    submit.textContent = 'Submit';
-    submit.onclick = () => {
-      closeActivePopover();
-      invoke('notif_answer_multi', { id: state.id, answers: Array.from(selected) });
-    };
-    pop.appendChild(submit);
+  function openExternalPopover(state, options, allowOther, multiSelect, triggerEl) {
+    const r = triggerEl.getBoundingClientRect();
+    invoke('open_popover', {
+      notifId: state.id,
+      items: options,
+      multiSelect: !!multiSelect,
+      allowOther: !!allowOther,
+      anchorX: r.left,
+      anchorY: r.top,
+      anchorHeight: r.height,
+    }).catch(err => console.error('open_popover failed', err));
   }
 
   function applyDenseClass(row, state) {

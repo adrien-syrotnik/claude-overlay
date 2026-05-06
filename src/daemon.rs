@@ -16,6 +16,7 @@ use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
+use tauri::Manager;
 use tokio_tungstenite::tungstenite::Message;
 use windows::core::HSTRING;
 use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, HANDLE};
@@ -75,6 +76,7 @@ pub struct DaemonCtx {
     pub registry: Arc<Registry>,
     pub pending: PendingMap,
     pub pending_answers: PendingAnswers,
+    pub popover_data: Mutex<Option<crate::tauri_app::PopoverData>>,
 }
 
 impl DaemonCtx {
@@ -84,6 +86,7 @@ impl DaemonCtx {
             registry: Arc::new(Registry::new()),
             pending: new_pending(),
             pending_answers: Arc::new(Mutex::new(HashMap::new())),
+            popover_data: Mutex::new(None),
         }
     }
 }
@@ -372,9 +375,8 @@ pub async fn run_foreground_watcher(ctx: Arc<DaemonCtx>, app: tauri::AppHandle) 
         let (fg_class, fg_title) = focus_win32::foreground_info();
         if fg_class.is_empty() { continue; }
         let fg_title_lc = fg_title.to_lowercase();
+        let mut popover_target_dismissed: Option<String> = None;
         for n in &notifs {
-            // Interactive notifs require a click — never auto-dismiss them.
-            if !matches!(n.input, crate::input_spec::InputSpec::None) { continue; }
             let needle = n.source_basename.to_lowercase();
             let class_ok = match n.source_type {
                 SourceType::Wt => fg_class.eq_ignore_ascii_case(focus_win32::CLASS_WT),
@@ -383,8 +385,29 @@ pub async fn run_foreground_watcher(ctx: Arc<DaemonCtx>, app: tauri::AppHandle) 
             };
             let title_ok = fg_title_lc.contains(&needle);
             if class_ok && title_ok {
+                // Interactive notifs: unblock the hook with an empty answer
+                // so Claude Code falls back to its native UI in the terminal
+                // the user is now looking at.
+                if let Some(tx) = ctx.pending_answers.lock().unwrap().remove(&n.id) {
+                    let _ = tx.send(String::new());
+                }
                 ctx.store.remove(&n.id);
                 crate::tauri_app::emit_notif_remove(&app, &n.id);
+                popover_target_dismissed = Some(n.id.clone());
+            }
+        }
+        // If the dropped notif had an open popover, close it too.
+        if let Some(dismissed_id) = popover_target_dismissed {
+            let close = {
+                let mut data = ctx.popover_data.lock().unwrap();
+                if let Some(d) = data.as_ref() {
+                    if d.notif_id == dismissed_id { *data = None; true } else { false }
+                } else { false }
+            };
+            if close {
+                if let Some(pop) = app.get_webview_window("popover") {
+                    let _ = pop.hide();
+                }
             }
         }
         if ctx.store.len() == 0 {

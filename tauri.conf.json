@@ -23,6 +23,21 @@
         "visible": false,
         "center": false,
         "focus": false
+      },
+      {
+        "label": "popover",
+        "url": "popover.html",
+        "title": "claude-overlay-popover",
+        "width": 288,
+        "height": 100,
+        "resizable": false,
+        "decorations": false,
+        "transparent": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "center": false,
+        "focus": false
       }
     ],
     "security": {

@@ -60,15 +60,20 @@ impl NotifStore {
         id
     }
 
-    /// Remove any existing entries with the same cwd, then add the new state.
-    /// Returns (new_id, removed_ids) so the caller can emit notif:remove for the displaced rows.
+    /// Remove any existing entries with the same cwd that DO NOT carry an
+    /// interactive InputSpec, then add the new state. Interactive notifs (yes_no,
+    /// single_choice, multi_choice, text_input) are kept because they have a
+    /// blocked hook stdin holding the daemon's oneshot — displacing them would
+    /// orphan the hook and force Claude Code into its native fallback UI.
+    /// Returns (new_id, removed_ids) so the caller can emit notif:remove for
+    /// the displaced rows.
     pub fn add_dedup_by_cwd(&self, mut state: NotifState) -> (String, Vec<String>) {
         let mut v = self.inner.lock().unwrap();
         let removed: Vec<String> = v.iter()
-            .filter(|n| n.cwd == state.cwd)
+            .filter(|n| n.cwd == state.cwd && matches!(n.input, InputSpec::None))
             .map(|n| n.id.clone())
             .collect();
-        v.retain(|n| n.cwd != state.cwd);
+        v.retain(|n| !(n.cwd == state.cwd && matches!(n.input, InputSpec::None)));
         state.id = Uuid::new_v4().to_string();
         state.created_at = Instant::now();
         let id = state.id.clone();
