@@ -87,6 +87,24 @@ if [[ "$EVENT" == "PreToolUse" ]]; then
     exit 0
   fi
 
+  # Mirror the question + options into the source terminal so the user sees it
+  # in parallel with the overlay (instead of only after clicking). Claude Code
+  # pipes our stdin/stdout, so /dev/tty is NOT reachable from the hook process.
+  # Fallback: resolve the tty of the parent shell ($SHELL_PID) via `ps` and
+  # write directly to /dev/pts/X. Best-effort.
+  MIRROR_TTY=""
+  if [[ "$SHELL_PID" != "0" ]]; then
+    MIRROR_TTY=$(ps -o tty= -p "$SHELL_PID" 2>/dev/null | tr -d ' ')
+  fi
+  log "AskUserQuestion: shell_pid=$SHELL_PID mirror_tty=${MIRROR_TTY:-<empty>}"
+  if [[ -n "$MIRROR_TTY" && "$MIRROR_TTY" != "?" && -w "/dev/$MIRROR_TTY" ]]; then
+    {
+      printf '\n\033[1;36m? %s\033[0m\n' "$QUESTION"
+      jq -r '.[] | "  - " + .label + (if (.description // "") != "" then "  (" + .description + ")" else "" end)' <<<"$OPTIONS_JSON"
+      printf '\033[2m  …waiting for your choice in the overlay…\033[0m\n\n'
+    } > "/dev/$MIRROR_TTY" 2>/dev/null || true
+  fi
+
   KIND="single_choice"
   if [[ "$MULTI" == "true" ]]; then KIND="multi_choice"; fi
 

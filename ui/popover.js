@@ -1,4 +1,22 @@
+function logEl() {
+  let el = document.getElementById('popover-debug');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'popover-debug';
+    el.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#222;color:#9af;font:10px/1.2 monospace;padding:2px 4px;border-top:1px solid #333;max-height:80px;overflow:auto;z-index:9999;';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+function trace(msg) {
+  const el = logEl();
+  const p = document.createElement('div');
+  p.textContent = `${new Date().toISOString().slice(11, 23)} ${msg}`;
+  el.appendChild(p);
+  el.scrollTop = el.scrollHeight;
+}
 function showError(msg) {
+  trace('ERR: ' + msg);
   const root = document.getElementById('popover-content') || document.body;
   while (root.firstChild) root.removeChild(root.firstChild);
   const p = document.createElement('div');
@@ -9,7 +27,7 @@ function showError(msg) {
     const api = getApi();
     if (api) {
       requestAnimationFrame(() => {
-        const h = root.getBoundingClientRect().height + 16;
+        const h = root.getBoundingClientRect().height + 96;
         api.invoke('set_popover_height_px', { height: Math.ceil(h) });
       });
     }
@@ -32,6 +50,7 @@ function clearChildren(el) {
 }
 
 function applyData(invoke, data) {
+  trace('applyData keys=' + (data ? Object.keys(data).join(',') : 'null'));
   if (!data) { showError('payload empty'); return; }
   if (!Array.isArray(data.items) || data.items.length === 0) {
     showError('no items');
@@ -41,6 +60,7 @@ function applyData(invoke, data) {
   isMulti = !!data.multi_select;
   allowOther = !!data.allow_other;
   selected.clear();
+  trace('notifId=' + notifId + ' multi=' + isMulti + ' n=' + data.items.length);
   render(invoke, data.items);
 }
 
@@ -80,7 +100,10 @@ function render(invoke, items) {
         btn.append(d);
       }
       btn.onclick = () => {
-        invoke('notif_answer', { id: notifId, answer: item.label });
+        trace('CLICK id=' + notifId + ' answer="' + item.label + '"');
+        invoke('notif_answer', { id: notifId, answer: item.label })
+          .then(() => trace('notif_answer OK'))
+          .catch(err => trace('notif_answer ERR ' + err));
         invoke('close_popover');
       };
       root.appendChild(btn);
