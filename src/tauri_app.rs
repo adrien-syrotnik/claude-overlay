@@ -159,6 +159,41 @@ pub async fn notif_focus(
     Ok(())
 }
 
+/// Build an ordered list of needle candidates for `find_window_by_title`,
+/// starting with the most-specific (the terminal's basename) and climbing up
+/// the cwd path. Stops at generic shared roots ("home", "users", "code",
+/// "src", "mnt", ...) so we never produce a needle that would match unrelated
+/// VS Code/Terminal windows. Caps at 4 candidates.
+fn derive_title_candidates(cwd: &str, source_basename: &str) -> Vec<String> {
+    const GENERIC: &[&str] = &[
+        "home", "users", "code", "src", "documents", "dev", "projects",
+        "workspace", "workspaces", "repos", "tmp", "var", "etc", "mnt",
+    ];
+    let mut out: Vec<String> = Vec::new();
+    if !source_basename.is_empty() {
+        out.push(source_basename.to_lowercase());
+    }
+    for ancestor in std::path::Path::new(cwd).ancestors() {
+        let Some(name) = ancestor.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let lc = name.to_lowercase();
+        if GENERIC.contains(&lc.as_str()) { break; }
+        // Skip a "user profile" name like /home/<user> or /Users/<user> —
+        // matching by username would route to any window owned by them.
+        let parent_lc = ancestor.parent()
+            .and_then(|p| p.file_name())
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_lowercase());
+        if matches!(parent_lc.as_deref(), Some("home") | Some("users")) { break; }
+        if !out.contains(&lc) {
+            out.push(lc);
+            if out.len() >= 4 { break; }
+        }
+    }
+    out
+}
+
 async fn do_send_async(answer: &str, id: &str, app: &AppHandle, ctx: &DaemonCtx) {
     use crate::input_spec::{Delivery, InputSpec};
     let Some(n) = ctx.store.get(id) else { return; };
@@ -183,14 +218,23 @@ async fn do_send_async(answer: &str, id: &str, app: &AppHandle, ctx: &DaemonCtx)
         }
     }
     if !ok {
-        let needle = n.source_basename.to_lowercase();
         let class = match n.source_type {
             SourceType::Wt => Some(focus_win32::CLASS_WT),
             SourceType::Vscode => Some(focus_win32::CLASS_VSCODE),
             SourceType::Unknown => None,
         };
-        if let Some(hwnd) = focus_win32::find_window_by_title(class, &needle) {
-            ok = focus_win32::send_keys_safe(hwnd, text).is_ok();
+        // Try `source_basename` first (matches when terminal cwd == workspace
+        // root) then climb the cwd ancestors. VS Code shows the workspace
+        // folder name in the title, which can be several levels up from a
+        // `cd subdir`-ed terminal — e.g. cwd `/home/x/proj/sub` with workspace
+        // `proj` only matches if we also try "proj" as a needle.
+        for needle in derive_title_candidates(&n.cwd, &n.source_basename) {
+            if let Some(hwnd) = focus_win32::find_window_by_title(class, &needle) {
+                if focus_win32::send_keys_safe(hwnd, text).is_ok() {
+                    ok = true;
+                    break;
+                }
+            }
         }
     }
 

@@ -95,6 +95,21 @@ body { display: flex; justify-content: center; align-items: flex-start; }
 
 .error-flash { background: rgba(239, 68, 68, 0.18); }
 
+/* Yes/No delivery failed: replace buttons with an inline tip + dismiss. */
+.notif-row.delivery-failed {
+  background: rgba(239, 68, 68, 0.10);
+}
+.delivery-hint {
+  color: rgba(255, 200, 200, 0.92);
+  font-size: 12px;
+  font-style: italic;
+  padding: 0 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+
 /* Dense fallback: tighter typography when a row has lots of content */
 .notif-row.dense { padding: 4px 4px; gap: 6px; }
 .notif-row.dense .message {

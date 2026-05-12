@@ -281,6 +281,31 @@ if (!tauri || !tauri.event || !tauri.core) {
     reconcile();
   }
 
+  // Yes/No (Allow/Deny, Yes/No) is delivered by injecting keystrokes into the
+  // source terminal — best-effort. When the daemon can't find or focus the
+  // target window it emits `notif:error` and the notif stays in the store.
+  // Replace the buttons with an inline hint so the user knows to answer in
+  // the terminal directly instead of clicking again into the void.
+  function markDeliveryFailed(payload) {
+    const row = listEl.querySelector(`.notif-row[data-id="${payload.id}"]`);
+    if (!row) return;
+    if (row.classList.contains('delivery-failed')) return;
+    row.classList.add('delivery-failed');
+    const group = row.querySelector('.btn-group');
+    if (!group) return;
+    while (group.firstChild) group.removeChild(group.firstChild);
+    const hint = document.createElement('span');
+    hint.className = 'delivery-hint';
+    hint.textContent = payload.reason === 'focus_lost'
+      ? 'No terminal found — answer in Claude Code'
+      : `Delivery failed: ${payload.reason || 'unknown'}`;
+    hint.title = "The overlay couldn't reach the source terminal. Type your answer in Claude Code directly.";
+    group.appendChild(hint);
+    const state = states.get(payload.id);
+    if (state) group.appendChild(mkDismissBtn(state));
+    requestAnimationFrame(syncOverlayHeight);
+  }
+
   (async () => {
     try {
       const list = await invoke('notif_list');
@@ -288,6 +313,7 @@ if (!tauri || !tauri.event || !tauri.core) {
       reconcile();
       await listen('notif:new', e => addNotif(e.payload));
       await listen('notif:remove', e => removeNotif(e.payload));
+      await listen('notif:error', e => markDeliveryFailed(e.payload));
       console.log('claude-overlay UI ready');
     } catch (err) {
       setStatus('claude-overlay · init error', 'dot-stop');
