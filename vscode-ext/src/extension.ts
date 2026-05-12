@@ -3,7 +3,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import WebSocket, { RawData } from 'ws';
 
-const DAEMON_URL = 'ws://127.0.0.1:57843';
+const DAEMON_URL = 'ws://127.0.0.1:47843';
 const DEBUG_LOG = '/tmp/claude-overlay-ext.log';
 
 function dlog(msg: string) {

@@ -1,5 +1,10 @@
-//! Daemon: listens for hook payloads (TCP 57842) and parses them into NotifState.
-//! Also exposes a WebSocket listener (port 57843) for VS Code extensions.
+//! Daemon: listens for hook payloads (TCP 47842) and parses them into NotifState.
+//! Also exposes a WebSocket listener (port 47843) for VS Code extensions.
+//!
+//! Ports MUST stay below 49152 (the Windows ephemeral/dynamic port range start):
+//! anything in 49152-65535 can be silently reserved by WinNAT/Hyper-V/WSL2 at
+//! any boot and become unbindable for us, with no visible owner in netstat.
+//! See claude-overlay-stderr.log incident 2026-05-12.
 
 use crate::focus_win32;
 use crate::heuristic::detect_yn_prompt;
@@ -22,8 +27,8 @@ use windows::core::HSTRING;
 use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, HANDLE};
 use windows::Win32::System::Threading::CreateMutexW;
 
-pub const HOOK_PORT: u16 = 57842;
-pub const WS_PORT: u16 = 57843;
+pub const HOOK_PORT: u16 = 47842;
+pub const WS_PORT: u16 = 47843;
 const MUTEX_NAME: &str = r"Global\claude-overlay-daemon";
 
 /// Try to acquire the global named mutex. Returns Some(handle) if we are the
@@ -385,9 +390,21 @@ pub async fn run_foreground_watcher(ctx: Arc<DaemonCtx>, app: tauri::AppHandle) 
             };
             let title_ok = fg_title_lc.contains(&needle);
             if class_ok && title_ok {
-                // Interactive notifs: unblock the hook with an empty answer
-                // so Claude Code falls back to its native UI in the terminal
-                // the user is now looking at.
+                // AskUserQuestion-style interactive notifs (Single/Multi/Text)
+                // require a visible click on the overlay — never auto-dismiss,
+                // even if the source terminal is foreground (the watcher
+                // ticking at 500ms would otherwise race the user's click and
+                // orphan the hook stdin). YesNo permission_prompts CAN be
+                // auto-dismissed because the user can answer Allow/Deny in
+                // Claude Code's native terminal UI just as easily.
+                use crate::input_spec::InputSpec;
+                let keep_open = matches!(
+                    n.input,
+                    InputSpec::SingleChoice { .. }
+                    | InputSpec::MultiChoice { .. }
+                    | InputSpec::TextInput { .. }
+                );
+                if keep_open { continue; }
                 if let Some(tx) = ctx.pending_answers.lock().unwrap().remove(&n.id) {
                     let _ = tx.send(String::new());
                 }
