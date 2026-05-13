@@ -380,6 +380,7 @@ pub async fn run_foreground_watcher(ctx: Arc<DaemonCtx>, app: tauri::AppHandle) 
         let (fg_class, fg_title) = focus_win32::foreground_info();
         if fg_class.is_empty() { continue; }
         let fg_title_lc = fg_title.to_lowercase();
+        eprintln!("[fg_watcher] fg_class={:?} fg_title={:?} notifs={}", fg_class, fg_title, notifs.len());
         let mut popover_target_dismissed: Option<String> = None;
         for n in &notifs {
             let needle = n.source_basename.to_lowercase();
@@ -389,22 +390,35 @@ pub async fn run_foreground_watcher(ctx: Arc<DaemonCtx>, app: tauri::AppHandle) 
                 SourceType::Unknown => false,
             };
             let title_ok = fg_title_lc.contains(&needle);
+            eprintln!("[fg_watcher] notif {} src={:?} needle={:?} class_ok={} title_ok={} age_ms={}",
+                n.id, n.source_type, needle, class_ok, title_ok, n.created_at.elapsed().as_millis());
             if class_ok && title_ok {
-                // AskUserQuestion-style interactive notifs (Single/Multi/Text)
-                // require a visible click on the overlay — never auto-dismiss,
-                // even if the source terminal is foreground (the watcher
-                // ticking at 500ms would otherwise race the user's click and
-                // orphan the hook stdin). YesNo permission_prompts CAN be
-                // auto-dismissed because the user can answer Allow/Deny in
-                // Claude Code's native terminal UI just as easily.
+                // Interactive notifs (YesNo / Single / Multi / Text) get
+                // auto-dismissed when the source terminal regains focus —
+                // semantic: "user came back, will answer in the native UI".
+                // For AskQuestion the empty-answer fallback in the hook
+                // triggers Claude Code's native AskUserQuestion UI; for YesNo
+                // the user just types Allow/Deny in the terminal prompt.
+                //
+                // Grace period: skip dismissal until the notif is at least
+                // 800ms old. Without this, if the source window is ALREADY
+                // foreground at notif arrival (the common case in VS Code
+                // since the chat panel and editor share the same HWND), the
+                // overlay flashes briefly and vanishes before the user even
+                // registers it. 800ms ≈ first-paint + reaction time.
                 use crate::input_spec::InputSpec;
-                let keep_open = matches!(
+                let is_interactive = matches!(
                     n.input,
-                    InputSpec::SingleChoice { .. }
+                    InputSpec::YesNo { .. }
+                    | InputSpec::SingleChoice { .. }
                     | InputSpec::MultiChoice { .. }
                     | InputSpec::TextInput { .. }
                 );
-                if keep_open { continue; }
+                if is_interactive
+                    && n.created_at.elapsed() < std::time::Duration::from_millis(800)
+                {
+                    continue;
+                }
                 if let Some(tx) = ctx.pending_answers.lock().unwrap().remove(&n.id) {
                     let _ = tx.send(String::new());
                 }

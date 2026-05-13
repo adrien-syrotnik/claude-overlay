@@ -130,10 +130,16 @@ if [[ "$EVENT" == "PreToolUse" ]]; then
   RESP=$(echo "$ASK_PAYLOAD" | claude-overlay.exe --stdin-ask 2>/dev/null || true)
   ANSWER=$(jq -r '.answer // empty' <<<"$RESP" 2>/dev/null || echo "")
   if [[ -n "$ANSWER" ]]; then
-    # AskUserQuestion-specific PreToolUse output: echo back the original
-    # questions array and provide an `answers` map. Bypasses Claude Code's
-    # native UI without rendering as a "blocking error". The legacy
-    # decision:block path is deprecated for PreToolUse per docs.
+    # AskUserQuestion-specific PreToolUse output. Per Claude Code docs:
+    # - `permissionDecision: "allow"` is REQUIRED to skip the interactive UI
+    # - `updatedInput.questions` must echo back the original questions array
+    #   (Claude Code's renderer `.map`s it — omitting it triggers a runtime
+    #   error in the chat surface)
+    # - `updatedInput.answers` maps question text → selected label; the daemon
+    #   joins multi-select labels with ", "
+    # If ANSWER is empty (user dismissed overlay or timeout), emit no JSON →
+    # Claude Code falls back to its native terminal UI for AskUserQuestion.
+    log "AskUserQuestion: answer received: '$ANSWER'"
     ORIG_QUESTIONS=$(jq -c '.tool_input.questions' <<<"$PAYLOAD")
     jq -nc \
       --arg q "$QUESTION" \
@@ -142,12 +148,15 @@ if [[ "$EVENT" == "PreToolUse" ]]; then
       '{
         hookSpecificOutput: {
           hookEventName: "PreToolUse",
+          permissionDecision: "allow",
           updatedInput: {
             questions: $questions,
             answers: { ($q): $a }
           }
         }
       }'
+  else
+    log "AskUserQuestion: no answer received (overlay dismissed or timed out → native UI fallback)"
   fi
   exit 0
 fi

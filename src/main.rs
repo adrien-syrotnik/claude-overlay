@@ -154,9 +154,12 @@ fn run_client_stdin() -> Result<()> {
 
 /// Sync mode for AskUserQuestion: send payload, then BLOCK reading two lines —
 /// the immediate ack (with notif_id) and the eventual answer (after the user
-/// clicks an option in the overlay). The answer line is printed to stdout so
-/// the bash hook can extract it and emit a `{"decision":"block","reason":"…"}`
-/// PreToolUse response back to Claude Code.
+/// clicks an option in the overlay, OR an empty answer if the overlay was
+/// dismissed / auto-dismissed on terminal refocus). The answer line is printed
+/// to stdout so the bash hook can extract it and emit a PreToolUse response
+/// shaped as `{hookSpecificOutput: {permissionDecision: "allow", updatedInput:
+/// {questions, answers}}}` which skips Claude Code's native UI. Empty answer
+/// → hook emits nothing → Claude Code falls back to the native UI in-terminal.
 fn run_client_stdin_ask() -> Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
