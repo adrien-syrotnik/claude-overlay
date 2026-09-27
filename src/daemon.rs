@@ -31,6 +31,76 @@ pub const HOOK_PORT: u16 = 47842;
 pub const WS_PORT: u16 = 47843;
 const MUTEX_NAME: &str = r"Global\claude-overlay-daemon";
 
+/// Path to the daemon's persistent log file. Lives in %USERPROFILE% on Windows
+/// (e.g. `C:\Users\<user>\claude-overlay.log`). Used to diagnose boot-time
+/// failures since stderr is invisible under `windows_subsystem = "windows"`.
+pub fn log_file_path() -> std::path::PathBuf {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| ".".to_string());
+    std::path::PathBuf::from(home).join("claude-overlay.log")
+}
+
+fn local_ts() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let secs_of_day = ((ms / 1000) % 86400) as u64;
+    let h = secs_of_day / 3600;
+    let m = (secs_of_day % 3600) / 60;
+    let s = secs_of_day % 60;
+    format!("{:02}:{:02}:{:02}.{:03} UTC", h, m, s, ms % 1000)
+}
+
+/// Append a single line to the daemon log file. Best-effort: never panics.
+pub fn log_to_file(msg: &str) {
+    use std::io::Write;
+    let path = log_file_path();
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "[{}] {}", local_ts(), msg);
+    }
+    eprintln!("{}", msg);
+}
+
+/// Attempt to bind a TCP listener on 127.0.0.1:port, retrying with exponential
+/// backoff for up to ~30s. Diagnoses boot-time port unavailability (WinNAT
+/// reservation, zombie sockets, AV scanning) instead of silently dying.
+async fn bind_with_retry(port: u16, label: &str) -> Result<TcpListener> {
+    let mut delay_ms = 200u64;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        match TcpListener::bind(("127.0.0.1", port)).await {
+            Ok(l) => {
+                if attempt > 1 {
+                    log_to_file(&format!(
+                        "[daemon] bind {} :{} OK after {} attempts",
+                        label, port, attempt
+                    ));
+                }
+                return Ok(l);
+            }
+            Err(e) => {
+                log_to_file(&format!(
+                    "[daemon] bind {} :{} attempt #{} failed: {}",
+                    label, port, attempt, e
+                ));
+                if std::time::Instant::now() >= deadline {
+                    return Err(anyhow::anyhow!(
+                        "bind {} :{} failed after {} attempts: {}",
+                        label, port, attempt, e
+                    ));
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                delay_ms = (delay_ms * 2).min(2000);
+            }
+        }
+    }
+}
+
 /// Try to acquire the global named mutex. Returns Some(handle) if we are the
 /// first instance, None if another daemon is already running.
 pub fn acquire_mutex() -> Result<Option<HANDLE>> {
@@ -161,9 +231,9 @@ pub async fn run_hook_listener_with_app(
     store: Arc<NotifStore>,
     app: tauri::AppHandle,
 ) -> Result<()> {
-    let listener = TcpListener::bind(("127.0.0.1", HOOK_PORT)).await
+    let listener = bind_with_retry(HOOK_PORT, "hook").await
         .context("bind hook port failed")?;
-    eprintln!("[daemon] hook listener on 127.0.0.1:{}", HOOK_PORT);
+    log_to_file(&format!("[daemon] hook listener on 127.0.0.1:{}", HOOK_PORT));
 
     loop {
         let (socket, _) = listener.accept().await?;
@@ -263,10 +333,9 @@ pub async fn run_hook_listener_with_app(
 }
 
 pub async fn run_ws_listener(ctx: Arc<DaemonCtx>) -> Result<()> {
-    let listener = TcpListener::bind(("127.0.0.1", WS_PORT))
-        .await
+    let listener = bind_with_retry(WS_PORT, "ws").await
         .context("bind ws port failed")?;
-    eprintln!("[daemon] ws listener on 127.0.0.1:{}", WS_PORT);
+    log_to_file(&format!("[daemon] ws listener on 127.0.0.1:{}", WS_PORT));
 
     loop {
         let (socket, _) = listener.accept().await?;

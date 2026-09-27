@@ -69,9 +69,13 @@ fn main() -> Result<()> {
 }
 
 fn run_daemon() -> Result<()> {
+    daemon::log_to_file("[daemon] starting up");
     let _mutex = match daemon::acquire_mutex()? {
         Some(h) => h,
-        None => { eprintln!("another daemon instance is already running"); std::process::exit(0); }
+        None => {
+            daemon::log_to_file("[daemon] another instance is already running, exiting");
+            std::process::exit(0);
+        }
     };
     let ctx = Arc::new(daemon::DaemonCtx::new());
 
@@ -105,11 +109,22 @@ fn run_daemon() -> Result<()> {
             handle.spawn(async move {
                 let store = ctx_hook.store.clone();
                 let app = app_hook;
-                let _ = daemon::run_hook_listener_with_app(ctx_hook, store, app).await;
+                // If the hook listener can't bind (boot-time port reservation,
+                // zombie socket, AV scanning), exit the whole process so the
+                // tray icon doesn't lie about being alive. Auto-start will
+                // re-launch us on next login; for in-session recovery the
+                // user can re-run claude-overlay.exe --daemon.
+                if let Err(e) = daemon::run_hook_listener_with_app(ctx_hook, store, app).await {
+                    daemon::log_to_file(&format!("[FATAL] hook listener exited: {}", e));
+                    std::process::exit(1);
+                }
             });
             let ctx_ws = ctx.clone();
             handle.spawn(async move {
-                let _ = daemon::run_ws_listener(ctx_ws).await;
+                if let Err(e) = daemon::run_ws_listener(ctx_ws).await {
+                    daemon::log_to_file(&format!("[FATAL] ws listener exited: {}", e));
+                    std::process::exit(1);
+                }
             });
             let ctx_fg = ctx.clone();
             let app_fg = app_handle.clone();

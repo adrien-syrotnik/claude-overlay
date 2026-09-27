@@ -53,15 +53,22 @@ if (!tauri || !tauri.event || !tauri.core) {
   }
 
   function mkFocusBtn(state) {
-    return mkButton('Focus', { onClick: () => invoke('notif_focus', { id: state.id }) });
+    return mkButton('↗', { icon: true, title: 'Focus terminal',
+      onClick: () => invoke('notif_focus', { id: state.id }) });
   }
 
   function mkDismissBtn(state) {
-    return mkButton('×', { icon: true, onClick: () => invoke('notif_dismiss', { id: state.id }) });
+    return mkButton('×', { icon: true, title: 'Dismiss',
+      onClick: () => invoke('notif_dismiss', { id: state.id }) });
+  }
+
+  // Trailing icons appended to every row: Focus then Dismiss. Always present.
+  function appendTail(state, group) {
+    group.append(mkFocusBtn(state), mkDismissBtn(state));
   }
 
   function renderNone(state, group) {
-    group.append(mkFocusBtn(state), mkDismissBtn(state));
+    appendTail(state, group);
   }
 
   function renderYesNo(state, group) {
@@ -70,7 +77,8 @@ if (!tauri || !tauri.event || !tauri.core) {
       onClick: () => invoke('notif_yes_no', { id: state.id, choice: true }) });
     const no = mkButton(isPerm ? 'Deny' : 'No',
       { onClick: () => invoke('notif_yes_no', { id: state.id, choice: false }) });
-    group.append(yes, no, mkDismissBtn(state));
+    group.append(yes, no);
+    appendTail(state, group);
   }
 
   function renderSingleChoice(state, group, row) {
@@ -89,7 +97,7 @@ if (!tauri || !tauri.event || !tauri.core) {
         group.append(mkButton('Other…', { onClick: () => switchToText(row, state) }));
       }
     }
-    group.append(mkDismissBtn(state));
+    appendTail(state, group);
   }
 
   function renderMultiChoice(state, group, row) {
@@ -119,7 +127,7 @@ if (!tauri || !tauri.event || !tauri.core) {
       group.append(mkButton('Submit', { accent: true,
         onClick: () => invoke('notif_answer_multi', { id: state.id, answers: Array.from(selected) }) }));
     }
-    group.append(mkDismissBtn(state));
+    appendTail(state, group);
   }
 
   function renderTextInput(state, group, row) {
@@ -138,7 +146,7 @@ if (!tauri || !tauri.event || !tauri.core) {
     };
     group.append(input);
     group.append(mkButton('Submit', { accent: true, onClick: () => submitText(state.id, input.value) }));
-    group.append(mkDismissBtn(state));
+    appendTail(state, group);
     setTimeout(() => input.focus(), 0);
   }
 
@@ -302,7 +310,7 @@ if (!tauri || !tauri.event || !tauri.core) {
     hint.title = "The overlay couldn't reach the source terminal. Type your answer in Claude Code directly.";
     group.appendChild(hint);
     const state = states.get(payload.id);
-    if (state) group.appendChild(mkDismissBtn(state));
+    if (state) appendTail(state, group);
     requestAnimationFrame(syncOverlayHeight);
   }
 

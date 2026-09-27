@@ -53,6 +53,16 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": [
+      "resources/claude-overlay-focus.vsix",
+      "resources/claude-overlay-notify.sh",
+      "resources/CLAUDE_SETUP.md"
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "./nsis/installer-hooks.nsh"
+      }
+    }
   }
 }
